@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 usage() {
-  echo "Usage: $0 [-c <number of cpus>] [-g <number of gpus>] [-m <memory MB>] [-w <working directory>] [-d <docker image>] [-b <0,1>] <command> [<args>...]";
+  echo "Usage: $0 [-c <number of cpus>] [-g <number of gpus>] [-m <memory MB>] [-w <working directory>] [-d <docker image>] [-b] <command> [<args>...]";
   echo;
   echo "    -c  Number of CPUs to request, default 5.";
   echo;
@@ -18,9 +18,9 @@ usage() {
   echo "        and";
   echo "            /groups/turaga/home available.";
   echo;
-  echo "    -b  If 1, run command in background. This uses sbatch to submit a";
-  echo "        task, see the status with squeue. If not given, this call will";
-  echo "        block and return the exit code of <command>.";
+  echo "    -b  If given run command in background. This uses sbatch to submit";
+  echo "        a task, see the status with squeue. If not given, this call";
+  echo "        will block and return the exit code of <command>.";
 }
 
 # defaults
@@ -30,38 +30,30 @@ GPUS=1
 MEMORY_MB=25600
 WORK_DIR=$(pwd)
 DOCKER_IMAGE=''
-BACKGROUND="false"
+BATCH="false"
 THIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # parse command line args
 
-num_args=0
-while getopts ":c:g:m:w:d:b:" opt; do
+while getopts ":c:g:m:w:d:b" opt; do
   case "${opt}" in
     c)
         CPUS=${OPTARG}
-        ((num_args+=2))
         ;;
     g)
         GPUS=${OPTARG}
-        ((num_args+=2))
         ;;
     m)
         MEMORY_MB=${OPTARG}
-        ((num_args+=2))
         ;;
     w)
         WORK_DIR=${OPTARG}
-        ((num_args+=2))
         ;;
     d)
         DOCKER_IMAGE=${OPTARG}
-        ((num_args+=2))
         ;;
     b)
-        BACKGROUND="true"
-        echo "Found b option"
-        ((num_args+=2))
+        BATCH="true"
         ;;
     *)
         usage
@@ -70,7 +62,7 @@ while getopts ":c:g:m:w:d:b:" opt; do
   esac
 done
 
-shift ${num_args}
+shift $((OPTIND-1))
 COMMAND="$@"
 
 # at least a command needs to be given
@@ -94,7 +86,14 @@ echo "Running \"${COMMAND}\" on ${CPUS} CPUs, ${GPUS} GPUs, ${MEMORY_MB} MB in $
 
 JOB_NAME="${USER}-$(date +%y-%m-%d_%H:%M:%S)-${RANDOM}"
 
-srun \
+if [ "$BATCH" == "false" ];
+then \
+  SLURM_CMD=srun
+else \
+  SLURM_CMD=sbatch
+fi
+
+${SLURM_CMD} \
   --job-name=${JOB_NAME} \
   --cpus-per-task=${CPUS} \
   --gres=gpu:${GPUS} \
