@@ -34,6 +34,60 @@ this case, `nvidia-docker` is used to run your container, and you will only see
 the GPUs that got assigned to you (which prevents you from using accidentally
 another one).
 
+### Example
+
+Here is an example that requests 2 GPUs, and executes `nvidia-smi` in an
+official nVidia docker image:
+
+```shell
+$ run_slurm -g 2 -d nvidia/cuda:8.0-cudnn6-devel-ubuntu16.04 nvidia-smi
+```
+
+This will produce something similar to:
+
+```
+Running "/usr/bin/run_docker -d nvidia/cuda:8.0-cudnn6-devel-ubuntu16.04 -w /groups/saalfeld/home/funkej/ nvidia-smi" on 5 CPUs, 2 GPUs, 25600 MB in /groups/saalfeld/home/funkej/, using docker image nvidia/cuda:8.0-cudnn6-devel-ubuntu16.04
+8.0-cudnn6-devel-ubuntu16.04: Pulling from nvidia/cuda
+bd97b43c27e3: Already exists
+6960dc1aba18: Already exists
+2b61829b0db5: Already exists
+1f88dc826b14: Already exists
+73b3859b1e43: Already exists
+6cbbf78e00cc: Already exists
+9a9aaca52ae8: Already exists
+667b113f0fa7: Already exists
+25d6389a39d4: Already exists
+88caab0861b4: Already exists
+3bff6d590045: Already exists
+f06a57d022c5: Already exists
+Digest: sha256:03ed92d9bcfedd7a44841a7c6934e74f5aad7af03592ce817ba36ffea65652e1
+Status: Downloaded newer image for nvidia/cuda:8.0-cudnn6-devel-ubuntu16.04
+Tue Jun 13 12:52:30 2017       
++-----------------------------------------------------------------------------+
+| NVIDIA-SMI 375.51                 Driver Version: 375.51                    |
+|-------------------------------+----------------------+----------------------+
+| GPU  Name        Persistence-M| Bus-Id        Disp.A | Volatile Uncorr. ECC |
+| Fan  Temp  Perf  Pwr:Usage/Cap|         Memory-Usage | GPU-Util  Compute M. |
+|===============================+======================+======================|
+|   0  GeForce GTX TIT...  Off  | 0000:08:00.0     Off |                  N/A |
+| 22%   28C    P8    15W / 250W |      0MiB / 12207MiB |      0%      Default |
++-------------------------------+----------------------+----------------------+
+|   1  GeForce GTX TIT...  Off  | 0000:09:00.0     Off |                  N/A |
+| 22%   26C    P8    15W / 250W |      0MiB / 12207MiB |      0%      Default |
++-------------------------------+----------------------+----------------------+
+
++-----------------------------------------------------------------------------+
+| Processes:                                                       GPU Memory |
+|  GPU       PID  Type  Process name                               Usage      |
+|=============================================================================|
+|  No running processes found                                                 |
++-----------------------------------------------------------------------------+
+```
+
+As you can see, the docker image is automatically downloaded (or updated) and
+launched. Inside the docker container, `nvidia-smi` sees only the two GPUs that
+got assigned to the `slurm` task.
+
 ### Low-level CLI
 
 `run_slurm` is just a convenience wrapper for `srun` and `sbatch`, two of the
