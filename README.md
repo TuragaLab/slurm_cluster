@@ -1,6 +1,9 @@
 Turaga Lab Slurm Cluster
 ========================
 
+User Guide
+----------
+
 To run a command on the cluster, simply call
 
 ```shell
@@ -13,8 +16,7 @@ available, you will not notice that the command is not run locally: You will
 see `stdout` and `stderr`, and the `run_slurm` returns with the exit code of
 your command.
 
-`run_slurm` Arguments
----------------------
+### `run_slurm` Arguments
 
 | Name | Description
 |:----:|:-------------------------------------------------------------------------------------------------------------------------------------------------|
@@ -32,8 +34,16 @@ this case, `nvidia-docker` is used to run your container, and you will only see
 the GPUs that got assigned to you (which prevents you from using accidentally
 another one).
 
-Setup a `slurm` node
-====================
+### Low-level CLI
+
+`run_slurm` is just a convenience wrapper for `srun` and `sbatch`, two of the
+tools provided by `slurm`. You can use them directly, if you want, see the
+documentation [here](https://slurm.schedmd.com/quickstart.html).
+
+Administrator Guide
+-------------------
+
+### Setup a `slurm` node
 
 Install `slurm` and `munge`:
 
