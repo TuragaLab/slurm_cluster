@@ -68,6 +68,7 @@ NV_GPU=$CUDA_VISIBLE_DEVICES nvidia-docker \
   --rm \
   -u `id -u $USER` \
   -v /groups:/groups \
+  -v /nrs:/nrs \
   -w ${WORK_DIR} \
   ${DOCKER_IMAGE} \
   ${COMMAND}
