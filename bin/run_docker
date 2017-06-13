@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+
+usage() {
+  echo "Usage: $0 [-w <working directory>] -d <docker image> <command> [<args>...]";
+  echo;
+  echo "    -w  The working directory for <command>, defaults to current";
+  echo "        directory.";
+  echo;
+  echo "    -d  Docker image to use to execute <command>. The docker container";
+  echo "        will have";
+  echo "            /groups/saalfeld/home";
+  echo "        and";
+  echo "            /groups/turaga/home";
+  echo "        available.";
+}
+
+# defaults
+
+WORK_DIR=$(pwd)
+DOCKER_IMAGE=''
+THIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# parse command line args
+
+num_args=0
+while getopts ":w:d:" opt; do
+  case "${opt}" in
+    w)
+        WORK_DIR=${OPTARG}
+        ((num_args+=2))
+        ;;
+    d)
+        DOCKER_IMAGE=${OPTARG}
+        ((num_args+=2))
+        ;;
+    *)
+        usage
+        exit
+        ;;
+  esac
+done
+
+shift ${num_args}
+COMMAND="$@"
+
+if [ "$DOCKER_IMAGE" == "" ];
+then \
+  echo No docker image provided!
+  echo
+  usage
+  exit
+fi
+
+if [ "${COMMAND}" == "" ];
+then \
+  echo No command provided!
+  echo
+  usage
+  exit
+fi
+
+# make sure we have the latest
+nvidia-docker pull ${DOCKER_IMAGE}
+
+# run
+NV_GPU=$CUDA_VISIBLE_DEVICES nvidia-docker \
+  run \
+  --rm \
+  -u `id -u $USER` \
+  -v /groups:/groups \
+  -w ${WORK_DIR} \
+  ${DOCKER_IMAGE} \
+  ${COMMAND}

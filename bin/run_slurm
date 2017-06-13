@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+
+usage() {
+  echo "Usage: $0 [-c <number of cpus>] [-g <number of gpus>] [-m <memory MB>] [-w <working directory>] [-d <docker image>] [-b <0,1>] <command> [<args>...]";
+  echo;
+  echo "    -c  Number of CPUs to request, default 5.";
+  echo;
+  echo "    -g  Number of GPUs to request, default 1.";
+  echo;
+  echo "    -m  Amount of memory to request, default 25600.";
+  echo;
+  echo "    -w  The working directory for <command>, defaults to current";
+  echo "        directory.";
+  echo;
+  echo "    -d  Optional docker image to use to execute <command>. The docker";
+  echo "        container will have";
+  echo "            /groups/saalfeld/home";
+  echo "        and";
+  echo "            /groups/turaga/home available.";
+  echo;
+  echo "    -b  If 1, run command in background. This uses sbatch to submit a";
+  echo "        task, see the status with squeue. If not given, this call will";
+  echo "        block and return the exit code of <command>.";
+}
+
+# defaults
+
+CPUS=5
+GPUS=1
+MEMORY_MB=25600
+WORK_DIR=$(pwd)
+DOCKER_IMAGE=''
+BACKGROUND="false"
+THIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# parse command line args
+
+num_args=0
+while getopts ":c:g:m:w:d:b:" opt; do
+  case "${opt}" in
+    c)
+        CPUS=${OPTARG}
+        ((num_args+=2))
+        ;;
+    g)
+        GPUS=${OPTARG}
+        ((num_args+=2))
+        ;;
+    m)
+        MEMORY_MB=${OPTARG}
+        ((num_args+=2))
+        ;;
+    w)
+        WORK_DIR=${OPTARG}
+        ((num_args+=2))
+        ;;
+    d)
+        DOCKER_IMAGE=${OPTARG}
+        ((num_args+=2))
+        ;;
+    b)
+        BACKGROUND="true"
+        echo "Found b option"
+        ((num_args+=2))
+        ;;
+    *)
+        usage
+        exit
+        ;;
+  esac
+done
+
+shift ${num_args}
+COMMAND="$@"
+
+# at least a command needs to be given
+if [ "$COMMAND" == "" ];
+then \
+  echo No command provided!
+  echo
+  usage
+  exit
+fi
+
+if [ "$DOCKER_IMAGE" == "" ];
+then \
+  docker_info=""
+else \
+  docker_info=", using docker image ${DOCKER_IMAGE}"
+  COMMAND="${THIS_DIR}/run_docker -d ${DOCKER_IMAGE} -w ${WORK_DIR} ${COMMAND}"
+fi
+
+echo "Running \"${COMMAND}\" on ${CPUS} CPUs, ${GPUS} GPUs, ${MEMORY_MB} MB in ${WORK_DIR}${docker_info}"
+
+JOB_NAME="${USER}-$(date +%y-%m-%d_%H:%M:%S)-${RANDOM}"
+
+srun \
+  --job-name=${JOB_NAME} \
+  --cpus-per-task=${CPUS} \
+  --gres=gpu:${GPUS} \
+  --mem=${MEMORY_MB} \
+  --ntasks=1 \
+  --share \
+  ${COMMAND}
+TASK_RETURN_VALUE=$?
+
+exit $TASK_RETURN_VALUE
