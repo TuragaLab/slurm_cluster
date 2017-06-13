@@ -24,8 +24,8 @@ your command.
 | `-g` | The number of GPUs to request, default 1.                                                                                                        |
 | `-m` | Amount of memory to request in MB, default 25600.                                                                                                |
 | `-w` | The working directory, if different from current.                                                                                                |
-| `-d` | A docker image to run the command inside. The docker container will have `/groups/` mounted (i.e., your home directory).                         |
-| `-b` | If given, the command will run in the background, and `run_slurm` will exit immediately. You can check the status of your command with `squeue`. |
+| `-d` | A docker image to run the command inside. The docker container will have `/groups/` mounted (i.e., your home directory) and `/nrs/`.             |
+| `-b` | If given, you indicate that your command is a batch script. `run_slurm` will submit the batch and exit, check the status with `squeue`.          |
 
 If you requested GPUs, the environment variable `CUDA_VISIBLE_DEVICES` will be
 set when your command runs. You can use this to know which GPUs got assigned to
@@ -33,6 +33,10 @@ you. Anyway, the preferred way to work with GPUs is to use a docker image. In
 this case, `nvidia-docker` is used to run your container, and you will only see
 the GPUs that got assigned to you (which prevents you from using accidentally
 another one).
+
+If you submit a batch script (`-b`), [`slurm`'s `sbatch`](https://slurm.schedmd.com/sbatch.html)
+will be used. In this case, `command` should be a script, starting with
+`#!<path/to/interpreter>`.
 
 ### Example
 
@@ -93,6 +97,8 @@ got assigned to the `slurm` task.
 `run_slurm` is just a convenience wrapper for `srun` and `sbatch`, two of the
 tools provided by `slurm`. You can use them directly, if you want, see the
 documentation [here](https://slurm.schedmd.com/quickstart.html).
+
+To monitor the status of the `slurm` cluster, run `smap -i1`.
 
 Administrator Guide
 -------------------
