@@ -88,7 +88,7 @@ JOB_NAME="${USER}-$(date +%y-%m-%d_%H:%M:%S)-${RANDOM}"
 
 if [ "$BATCH" == "false" ];
 then \
-  SLURM_CMD=srun
+  SLURM_CMD="srun -X"
 else \
   SLURM_CMD=sbatch
 fi
