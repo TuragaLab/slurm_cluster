@@ -7,7 +7,7 @@ User Guide
 To run a command on the cluster, simply call
 
 ```shell
-$ run_slurm command args...
+$ run_slurm [options, see below] command args...
 ```
 
 This will execute `command args...` somewhere in the cluster, and block until
