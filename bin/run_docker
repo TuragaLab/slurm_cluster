@@ -63,7 +63,8 @@ fi
 nvidia-docker pull ${DOCKER_IMAGE}
 
 # run
-NV_GPU=$CUDA_VISIBLE_DEVICES nvidia-docker \
+export NV_GPU=$CUDA_VISIBLE_DEVICES
+exec nvidia-docker \
   run \
   --rm \
   -u `id -u $USER` \
