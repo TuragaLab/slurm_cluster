@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -e
 
 usage() {
   echo "Usage: $0 [-w <working directory>] -d <docker image> <command> [<args>...]";
@@ -59,17 +60,31 @@ then \
   exit
 fi
 
+CONTAINER_NAME=${USER}-$(date +%y-%m-%d_%H-%M-%S)-${RANDOM}
+
 # make sure we have the latest
 nvidia-docker pull ${DOCKER_IMAGE}
 
-# run
+teardown() {
+  trap - SIGINT SIGTERM
+  echo "run_docker: Stopping container ${CONTAINER_NAME}"
+  docker stop -t=1 ${CONTAINER_NAME}
+  kill -- -$$
+}
+
+trap teardown SIGINT SIGTERM EXIT
+
+# run nvidia-docker in background
 export NV_GPU=$CUDA_VISIBLE_DEVICES
-exec nvidia-docker \
+nvidia-docker \
   run \
   --rm \
+  --name ${CONTAINER_NAME} \
   -u `id -u $USER` \
   -v /groups:/groups \
   -v /nrs:/nrs \
   -w ${WORK_DIR} \
   ${DOCKER_IMAGE} \
-  ${COMMAND}
+  ${COMMAND} &
+
+wait
