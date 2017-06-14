@@ -82,9 +82,9 @@ else \
   COMMAND="${THIS_DIR}/run_docker -d ${DOCKER_IMAGE} -w ${WORK_DIR} ${COMMAND}"
 fi
 
-echo "Running \"${COMMAND}\" on ${CPUS} CPUs, ${GPUS} GPUs, ${MEMORY_MB} MB in ${WORK_DIR}${docker_info}"
+JOB_NAME="$(basename $1)_$(date +%m.%d-%H:%M:%S)_${RANDOM}"
 
-JOB_NAME="${USER}-$(date +%y-%m-%d_%H:%M:%S)-${RANDOM}"
+echo "Scheduling job ${JOB_NAME} on ${CPUS} CPUs, ${GPUS} GPUs, ${MEMORY_MB} MB in ${WORK_DIR}${docker_info}"
 
 if [ "$BATCH" == "false" ];
 then \
