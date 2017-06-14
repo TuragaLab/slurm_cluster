@@ -67,12 +67,12 @@ nvidia-docker pull ${DOCKER_IMAGE}
 
 teardown() {
   trap - SIGINT SIGTERM
-  echo "run_docker: Stopping container ${CONTAINER_NAME}"
-  docker stop -t=1 ${CONTAINER_NAME}
-  kill -- -$$
+  echo "run_docker: Stopping container ${CONTAINER_NAME}, killing after 5s..."
+  docker stop -t5 ${CONTAINER_NAME}
+  echo "run_docker: Container ${CONTAINER_NAME} stopped."
 }
 
-trap teardown SIGINT SIGTERM EXIT
+trap teardown SIGINT SIGTERM
 
 # run nvidia-docker in background
 export NV_GPU=$CUDA_VISIBLE_DEVICES
