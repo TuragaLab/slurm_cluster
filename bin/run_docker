@@ -60,7 +60,7 @@ then \
   exit
 fi
 
-CONTAINER_NAME=${USER}-$(date +%y-%m-%d_%H-%M-%S)-${RANDOM}
+CONTAINER_NAME=${CONTAINER_NAME:-${USER}-$(date +%y-%m-%d_%H-%M-%S)-${RANDOM}}
 
 # make sure we have the latest
 nvidia-docker pull ${DOCKER_IMAGE}
