@@ -24,7 +24,7 @@ username_width=8
 # comment_width is flexible
 gres_width=6
 cpu_width=4
-time_width=8
+time_width=11
 state_width=8
 name_width=8
 nodelist_width=8
