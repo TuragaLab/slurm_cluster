@@ -1,6 +1,23 @@
 #!/bin/bash
 set -e
 
+c=0
+color() {
+  while IFS= read line
+  do \
+    ((c+=1))
+    if [ $c -gt 1 ]
+    then \
+      COLOR_CODE=$((31+(c%7)))
+      echo -e -n "\e[${COLOR_CODE}m"
+    else
+      echo -e -n "\e[1m"
+    fi
+    echo "$line"
+    echo -e -n "\e[0m"
+  done
+}
+
 width=$(tput cols)
 jobid_width=5
 username_width=8
@@ -21,7 +38,13 @@ fi
 if [ "$1" == "-1" ]
 then \
   squeue -o "%.${jobid_width}A %${username_width}u %${comment_width}k %.${gres_width}b %.${cpu_width}C %.${time_width}M %${state_width}T %${name_width}j %${nodelist_width}R" \
-    | sed 's/COMMENT/COMMAND/' | sed 's/GRES/GPUS/' | sed 's/gpu:/    /'
+    | sed 's/COMMENT/COMMAND/' | sed 's/GRES/GPUS/' | sed 's/gpu:/    /' | color
 else
-  watch -t -n 1 $0 -1
+  #while [ true ]
+  #do \
+    #clear
+    #$0 -1
+    #sleep 1
+  #done
+  watch --color -t -n 1 $0 -1
 fi
