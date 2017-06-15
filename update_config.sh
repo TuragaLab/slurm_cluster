@@ -1,11 +1,13 @@
 #!/bin/bash
 
-for node in slowpoke1 slowpoke2 slowpoke3
+for node in slowpoke{1,2,3} turagas-ws{1,2,3,4,5}
 do \
-  echo "Updating configuration on ${node}"
+  echo
+  echo "============= Updating configuration on ${node}"
+  echo
   # copy all the configuration files, and make sure slurm and munge are running
   # (does nothing, if already running)
-  ssh ${node} "( \
+  ssh -t ${node} "( \
     cd $(pwd) && \
     sudo cp config/slurm.conf /etc/slurm-llnl/ && \
     sudo cp config/gres.conf /etc/slurm-llnl/ && \
