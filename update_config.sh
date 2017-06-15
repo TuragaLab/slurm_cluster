@@ -14,6 +14,7 @@ do \
     sudo chown munge:munge /etc/munge/munge.key && \
     sudo cp bin/run_slurm /usr/bin && \
     sudo cp bin/run_docker /usr/bin && \
+    sudo cp bin/spy /usr/bin && \
     sudo /etc/init.d/slurm-llnl start && \
     sudo /etc/init.d/munge start)"
 done
