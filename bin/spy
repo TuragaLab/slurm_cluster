@@ -1,23 +1,27 @@
 #!/bin/bash
 set -e
 
-watch -t -n 1  '( \
-  width=$(tput cols); \
-  jobid_width=5; \
-  username_width=8; \
-  # comment_width is flexible; \
-  gres_width=6; \
-  cpu_width=4; \
-  time_width=8; \
-  state_width=8; \
-  name_width=8; \
-  nodelist_width=8; \
-  comment_width=$((width-jobid_width-username_width-gres_width-cpu_width-time_width-state_width-name_width-nodelist_width-8)); \
-  if [ $comment_width -le 0 ]; \
-  then \
-    echo "Your terminal is too small!"; \
-    exit 1; \
-  fi; \
+width=$(tput cols)
+jobid_width=5
+username_width=8
+# comment_width is flexible
+gres_width=6
+cpu_width=4
+time_width=8
+state_width=8
+name_width=8
+nodelist_width=8
+comment_width=$((width-jobid_width-username_width-gres_width-cpu_width-time_width-state_width-name_width-nodelist_width-8))
+if [ $comment_width -le 0 ]
+then \
+  echo "Your terminal is too small!"
+  exit 1
+fi
+
+if [ "$1" == "-1" ]
+then \
   squeue -o "%.${jobid_width}A %${username_width}u %${comment_width}k %.${gres_width}b %.${cpu_width}C %.${time_width}M %${state_width}T %${name_width}j %${nodelist_width}R" \
-    | sed '"'"'s/COMMENT/COMMAND/'"'"' | sed '"'"'s/GRES/GPUS/'"'"' | sed '"'"'s/gpu:/    /'"'"' 
-)'
+    | sed 's/COMMENT/COMMAND/' | sed 's/GRES/GPUS/' | sed 's/gpu:/    /'
+else
+  watch -t -n 1 $0 -1
+fi
