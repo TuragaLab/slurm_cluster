@@ -77,8 +77,12 @@ fi
 if [ "$DOCKER_IMAGE" == "" ];
 then \
   docker_info=""
+  COMMENT="${COMMAND}"
 else \
   docker_info=", using docker image ${DOCKER_IMAGE}"
+  CONTAINER_ID="${RANDOM}"
+  export CONTAINER_NAME="${USER}_${CONTAINER_ID}"
+  COMMENT="(${DOCKER_IMAGE}|${CONTAINER_ID}) ${COMMAND}"
   COMMAND="${THIS_DIR}/run_docker -d ${DOCKER_IMAGE} -w ${WORK_DIR} ${COMMAND}"
 fi
 
@@ -100,7 +104,7 @@ ${SLURM_CMD} \
   --mem=${MEMORY_MB} \
   --ntasks=1 \
   --share \
-  --comment="${COMMAND}" \
+  --comment="${COMMENT}" \
   ${COMMAND}
 TASK_RETURN_VALUE=$?
 
