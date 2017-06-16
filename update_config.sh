@@ -17,6 +17,10 @@ do \
     sudo cp bin/run_slurm /usr/bin && \
     sudo cp bin/run_docker /usr/bin && \
     sudo cp bin/spy /usr/bin && \
+    echo 'All configuration updated' && \
+    (sudo mkdir /dev/cpuset || true) && \
+    (sudo mount -t cpuset cpuset /dev/cpuset || true) && \
+    echo 'cpusets mounted at /dev/cpuset' && \
     sudo /etc/init.d/slurm-llnl start && \
     sudo /etc/init.d/munge start)"
 done
