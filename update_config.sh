@@ -11,6 +11,7 @@ do \
     cd $(pwd) && \
     sudo cp config/slurm.conf /etc/slurm-llnl/ && \
     sudo cp config/gres.conf /etc/slurm-llnl/ && \
+    sudo cp config/cgroup.conf /etc/slurm-llnl/ && \
     sudo cp config/munge.key /etc/munge/ && \
     sudo chmod u=r,g=,o= /etc/munge/munge.key && \
     sudo chown munge:munge /etc/munge/munge.key && \
