@@ -79,6 +79,7 @@ export NV_GPU=$CUDA_VISIBLE_DEVICES
 nvidia-docker \
   run \
   --rm \
+  --cgroup-parent=$(cat /proc/self/cpuset) \
   --name ${CONTAINER_NAME} \
   -u `id -u $USER` \
   -v /groups:/groups \
