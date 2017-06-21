@@ -1,6 +1,46 @@
 #!/bin/bash
 set -e
 
+usage() {
+  echo "Usage: $0 [-1] [-g] [-p] [-d]";
+  echo;
+  echo "    -1  Show status only once, don't loop.";
+  echo "    -g  Include GPU usage information (updates will be much slower).";
+  echo "    -p  Include GPU process information (updates will be much slower).";
+  echo "    -d  Include docker image information (updates will be much slower).";
+}
+
+# defaults
+
+ONCE=0
+SHOW_GPU_USAGE=0
+SHOW_GPU_PROCESSES=0
+SHOW_DOCKER_IMAGES=0
+
+# parse command line args
+
+num_args=0
+while getopts ":1gpd" opt; do
+  case "${opt}" in
+    1)
+        ONCE=1
+        ;;
+    g)
+        SHOW_GPU_USAGE=1
+        ;;
+    p)
+        SHOW_GPU_PROCESSES=1
+        ;;
+    d)
+        SHOW_DOCKER_IMAGES=1
+        ;;
+    *)
+        usage
+        exit
+        ;;
+  esac
+done
+
 c=0
 color() {
   while IFS= read line
@@ -35,16 +75,40 @@ then \
   exit 1
 fi
 
-if [ "$1" == "-1" ]
+if [ $ONCE -eq 1 ]
 then \
   squeue -o "%.${jobid_width}A %${username_width}u %${comment_width}k %.${gres_width}b %.${cpu_width}C %.${time_width}M %${state_width}T %${name_width}j %${nodelist_width}R" \
     | sed 's/COMMENT/COMMAND/' | sed 's/GRES/GPUS/' | sed 's/gpu:/    /' | color
+  if [ $SHOW_DOCKER_IMAGES -eq 1 ]
+  then \
+    for node in slowpoke{1,2,3}
+    do \
+      echo
+      echo "Docker images on $node:"
+      echo
+      ssh $node docker ps | color
+    done
+  fi
+  if [ $SHOW_GPU_USAGE -eq 1 ]
+  then \
+    for node in slowpoke{1,2,3}
+    do \
+      echo
+      echo "GPU usage on $node:"
+      echo
+      ssh $node nvidia-smi --query-gpu=utilization.memory,utilization.gpu --format=csv | color
+    done
+  fi
+  if [ $SHOW_GPU_PROCESSES -eq 1 ]
+  then \
+    for node in slowpoke{1,2,3}
+    do \
+      echo
+      echo "GPU processes on $node:"
+      echo
+      ssh $node 'ps f -o user,pgrp,pid,pcpu,pmem,start,time,command -p $(nvidia-smi --query-compute-apps=pid --format=csv,noheader)' | color
+    done
+  fi
 else
-  #while [ true ]
-  #do \
-    #clear
-    #$0 -1
-    #sleep 1
-  #done
-  watch --color -t -n 1 $0 -1
+  watch --color -t -n 1 $0 -1 $@
 fi
