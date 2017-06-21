@@ -98,7 +98,7 @@ got assigned to the `slurm` task.
 tools provided by `slurm`. You can use them directly, if you want, see the
 documentation [here](https://slurm.schedmd.com/quickstart.html).
 
-To monitor the status of the `slurm` cluster, run `smap -i1`.
+To monitor the status of the `slurm` cluster, run `spy`.
 
 Administrator Guide
 -------------------
@@ -116,5 +116,6 @@ Make `/var/log/munge` accessible all the way for munge (requrired `o=rX` for
 
 Edit `config/slurm.conf` and add a line for the new node.
 
-Finally, call `update_config_restart.sh` from this repository, which will copy
-the configuration files for `slurm` and (re)start the daemon.
+Finally, call `update_config.sh` from this repository, which will copy the
+configuration files for `slurm`, start the daemons (if not running) and trigger
+a reconfiguration of the cluster. This will keep currently running jobs.
