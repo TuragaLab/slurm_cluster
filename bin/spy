@@ -81,7 +81,7 @@ then \
     | sed 's/COMMENT/COMMAND/' | sed 's/GRES/GPUS/' | sed 's/gpu:/    /' | color
   if [ $SHOW_DOCKER_IMAGES -eq 1 ]
   then \
-    for node in slowpoke{1,2,3}
+    for node in slowpoke{1,2,3,4}
     do \
       echo
       echo "Docker images on $node:"
@@ -91,7 +91,7 @@ then \
   fi
   if [ $SHOW_GPU_USAGE -eq 1 ]
   then \
-    for node in slowpoke{1,2,3}
+    for node in slowpoke{1,2,3,4}
     do \
       echo
       echo "GPU usage on $node:"
@@ -101,7 +101,7 @@ then \
   fi
   if [ $SHOW_GPU_PROCESSES -eq 1 ]
   then \
-    for node in slowpoke{1,2,3}
+    for node in slowpoke{1,2,3,4}
     do \
       echo
       echo "GPU processes on $node:"
