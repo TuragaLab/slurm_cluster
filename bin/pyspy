@@ -1,0 +1,157 @@
+#!/usr/bin/env python
+
+try:
+    import Queue
+except:
+    import queue as Queue
+from pexpect import pxssh
+import curses
+import getpass
+import multiprocessing
+import os
+
+# nodes = ['slowpoke1', 'slowpoke2', 'slowpoke3', 'slowpoke4']
+nodes = ['slowpoke1']
+
+class Spy:
+
+    def __init__(self):
+
+        self.screen = curses.initscr()
+        self.screen.nodelay(1)
+        self.screen.keypad(1)
+        curses.start_color()
+        curses.curs_set(0)
+        curses.noecho()
+
+        self.status = "Started"
+        self.connections = {}
+        self.node_status_queues = { node: multiprocessing.Queue(10) for node in nodes }
+        self.node_status = { node: {'text': "[unknown]"} for node in nodes }
+
+        self.stop = multiprocessing.Event()
+        self.update_node_status_worker = multiprocessing.Process(target=self.__get_node_infos)
+        self.stop.clear()
+        self.update_node_status_worker.start()
+
+    def main_loop(self):
+
+        while True:
+
+            self.redraw()
+
+            char = self.screen.getch()
+            if char == curses.ERR:
+                continue
+
+            if char == curses.KEY_UP or char == ord('k'):
+                self.status = "Up key pressed"
+            if char == curses.KEY_DOWN or char == ord('j'):
+                self.status = "Down key pressed"
+            if char == ord('q'):
+                break
+            if char == ord('e'):
+                raise RuntimeException("Blarg...")
+
+    def redraw(self):
+
+        self.__update_node_status()
+
+        self.screen.erase()
+
+        i = 0
+        for node in nodes:
+
+            status = self.node_status[node]
+
+            self.screen.move(i,0)
+            if 'text' in status:
+                self.screen.addstr(node + ": " + status['text'])
+            elif 'result' in status:
+                j = i+1
+                for line in status['result'].split('\n'):
+                    self.screen.addstr(j, 0, line)
+                    j += 1
+            else:
+                self.screen.addstr(node + ": " + str(status))
+            i += 1
+
+        self.screen.addstr(curses.LINES - 1, 0, self.status)
+        self.screen.refresh()
+
+    def teardown(self):
+
+        self.stop.set()
+        curses.endwin()
+        self.update_node_status_worker.join()
+
+    def __update_node_status(self):
+
+        for node in nodes:
+
+            # get the most recent node status
+            status = None
+            while not self.node_status_queues[node].empty():
+                status = self.node_status_queues[node].get()
+            if status is None:
+                continue
+
+            self.node_status[node] = status
+
+    def __get_node_infos(self):
+
+        parent_pid = os.getppid()
+
+        for node in nodes:
+            self.node_status_queues[node].put({'text': "connecting..."})
+            connection = pxssh.pxssh()
+            connection.login(node, getpass.getuser())
+            self.connections[node] = connection
+            self.node_status_queues[node].put({'text': "connected"})
+
+        while not self.stop.wait(1):
+
+            if os.getppid() != parent_pid:
+                logger.error("parent of producer pool died, shutting down")
+                break
+
+            for node, connection in self.connections.items():
+
+                # connection.sendline('nvidia-smi --query-gpu=utilization.memory,utilization.gpu --format=noheader,csv')
+                connection.sendline('echo Foo')
+                if connection.prompt():
+                    result = connection.before
+
+                    # gpu_status = []
+                    # gpu = 0
+                    # for line in result.split('\n'):
+                        # tokens = line.split(',')
+                        # mem_percent = float(tokens[0])
+                        # gpu_percent = float(tokens[1])
+                        # gpu_status.append({
+                            # 'gpu':gpu,
+                            # 'mem_percent':mem_percent,
+                            # 'gpu_percent':gpu_percent
+                        # })
+
+                    # self.node_status_queues[node].put(gpu_status)
+
+                    self.node_status_queues[node].put({'result': result})
+
+                else:
+
+                    self.node_status_queues[node].put({'text': "nvidia-smi didn't finish in time"})
+
+        for node, connection in self.connections.items():
+            connection.logout()
+
+
+if __name__ == "__main__":
+
+    spy = Spy()
+    try:
+        spy.main_loop()
+    except:
+        spy.teardown()
+        raise
+    spy.teardown()
