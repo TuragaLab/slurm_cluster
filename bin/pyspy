@@ -1,17 +1,97 @@
-#!/usr/bin/env python
+#!/usr/bin/python
+
+#############################################################################
+# --raw-node-state version
+#############################################################################
+
+from subprocess import check_output
+import argparse
+import json
+import sys
+
+parser = argparse.ArgumentParser(description='Spy on slurm usage.')
+parser.add_argument(
+        '--raw-node-stats', action='store_const',
+        const='raw_node_stats', default=False,
+        help='Report this node stats as JSON string. Used internally.')
+
+args = parser.parse_args()
+
+if args.raw_node_stats:
+
+    result = check_output(
+            [
+                'nvidia-smi',
+                '--query-gpu=utilization.memory,utilization.gpu',
+                '--format=noheader,csv'
+            ]
+    )
+
+    gpu_stats = []
+    gpu = 0
+    for line in result.split('\n'):
+        if line == '':
+            continue
+        tokens = line.split(',')
+        mem_percent = float(tokens[0][:-1])
+        gpu_percent = float(tokens[1][:-1])
+        gpu_stats.append({
+            'gpu':gpu,
+            'mem_percent':mem_percent,
+            'gpu_percent':gpu_percent
+        })
+        gpu += 1
+
+    result = check_output(
+            [
+                'docker',
+                'ps',
+                '--no-trunc=true'
+            ]
+    )
+
+    lines = result.split('\n')
+    idx_id = lines[0].find('CONTAINER')
+    idx_image = lines[0].find('IMAGE')
+    idx_command = lines[0].find('COMMAND')
+    idx_created = lines[0].find('CREATED')
+    idx_status = lines[0].find('STATUS')
+    idx_ports = lines[0].find('PORTS')
+    idx_names = lines[0].find('NAMES')
+
+    docker_stats = []
+    for line in lines[1:]:
+        docker_stats.append({
+            'container_id': line[idx_id:idx_image].strip(),
+            'image': line[idx_image:idx_command].strip(),
+            'command': line[idx_command:idx_created].strip(),
+            'created': line[idx_created:idx_status].strip(),
+            'status': line[idx_status:idx_ports].strip(),
+            'ports': line[idx_ports:idx_names].strip(),
+            'names': line[idx_names:].strip(),
+        })
+
+    stats = { 'gpu_stats': gpu_stats, 'docker_stats': docker_stats }
+    print json.dumps(stats)
+
+    sys.exit(0)
+
+#############################################################################
+# default spy version
+#############################################################################
 
 try:
     import Queue
 except:
     import queue as Queue
-from pexpect import pxssh
 import curses
 import getpass
 import multiprocessing
 import os
+import paramiko
 
-# nodes = ['slowpoke1', 'slowpoke2', 'slowpoke3', 'slowpoke4']
-nodes = ['slowpoke1']
+nodes = ['slowpoke1', 'slowpoke2', 'slowpoke3', 'slowpoke4']
+spy_command = os.path.abspath(__file__)
 
 class Spy:
 
@@ -24,8 +104,9 @@ class Spy:
         curses.curs_set(0)
         curses.noecho()
 
-        self.status = "Started"
         self.connections = {}
+        self.status_queue = multiprocessing.Queue(100)
+        self.status = "Started"
         self.node_status_queues = { node: multiprocessing.Queue(10) for node in nodes }
         self.node_status = { node: {'text': "[unknown]"} for node in nodes }
 
@@ -33,6 +114,9 @@ class Spy:
         self.update_node_status_worker = multiprocessing.Process(target=self.__get_node_infos)
         self.stop.clear()
         self.update_node_status_worker.start()
+
+    def update_status(self, status):
+        self.status_queue.put(status)
 
     def main_loop(self):
 
@@ -55,28 +139,20 @@ class Spy:
 
     def redraw(self):
 
-        self.__update_node_status()
-
         self.screen.erase()
 
+        # node status
+        self.__update_node_status()
         i = 0
         for node in nodes:
-
             status = self.node_status[node]
-
-            self.screen.move(i,0)
-            if 'text' in status:
-                self.screen.addstr(node + ": " + status['text'])
-            elif 'result' in status:
-                j = i+1
-                for line in status['result'].split('\n'):
-                    self.screen.addstr(j, 0, line)
-                    j += 1
-            else:
-                self.screen.addstr(node + ": " + str(status))
+            self.__draw_node_status(node, status, 3,i*30)
             i += 1
 
+        # global status
+        self.__update_status()
         self.screen.addstr(curses.LINES - 1, 0, self.status)
+
         self.screen.refresh()
 
     def teardown(self):
@@ -84,6 +160,39 @@ class Spy:
         self.stop.set()
         curses.endwin()
         self.update_node_status_worker.join()
+
+    def __draw_node_status(self, node, status, y, x):
+
+        col_width = 10
+
+        if 'text' in status:
+
+            self.screen.addstr(y, x, node + ": " + status['text'])
+
+        elif 'node_stats' in status:
+
+            stats = status['node_stats']
+
+            # GPU usage
+
+            self.screen.addstr(y, x, '#GPU'.ljust(col_width) + 'Mem %'.ljust(col_width) + 'GPU %'.ljust(col_width))
+
+            for gpu_stats in stats['gpu_stats']:
+
+                gpu = gpu_stats['gpu']
+                mem_percent = gpu_stats['mem_percent']
+                gpu_percent = gpu_stats['gpu_percent']
+                self.screen.addstr(y + gpu + 1, x,
+                        str(gpu).ljust(col_width) +
+                        str(mem_percent).ljust(col_width) +
+                        str(gpu_percent).ljust(col_width)
+                )
+
+
+    def __update_status(self):
+
+        while not self.status_queue.empty():
+            self.status = self.status_queue.get()
 
     def __update_node_status(self):
 
@@ -104,12 +213,14 @@ class Spy:
 
         for node in nodes:
             self.node_status_queues[node].put({'text': "connecting..."})
-            connection = pxssh.pxssh()
-            connection.login(node, getpass.getuser())
+            connection = paramiko.SSHClient()
+            connection.load_system_host_keys()
+            connection.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            connection.connect(node)
             self.connections[node] = connection
             self.node_status_queues[node].put({'text': "connected"})
 
-        while not self.stop.wait(1):
+        while not self.stop.is_set():
 
             if os.getppid() != parent_pid:
                 logger.error("parent of producer pool died, shutting down")
@@ -117,34 +228,20 @@ class Spy:
 
             for node, connection in self.connections.items():
 
-                # connection.sendline('nvidia-smi --query-gpu=utilization.memory,utilization.gpu --format=noheader,csv')
-                connection.sendline('echo Foo')
-                if connection.prompt():
-                    result = connection.before
+                self.update_status("calling " + spy_command + " on " + node)
+                stdin, stdout, stderr = connection.exec_command(spy_command + ' --raw-node-stats')
+                result = ''.join([l for l in stdout ])
 
-                    # gpu_status = []
-                    # gpu = 0
-                    # for line in result.split('\n'):
-                        # tokens = line.split(',')
-                        # mem_percent = float(tokens[0])
-                        # gpu_percent = float(tokens[1])
-                        # gpu_status.append({
-                            # 'gpu':gpu,
-                            # 'mem_percent':mem_percent,
-                            # 'gpu_percent':gpu_percent
-                        # })
+                try:
+                    result = json.loads(result)
+                    self.node_status_queues[node].put({'node_stats': result})
+                except:
+                    self.node_status_queues[node].put({'text': "Couldn't deserialize " + result})
+                    raise
 
-                    # self.node_status_queues[node].put(gpu_status)
-
-                    self.node_status_queues[node].put({'result': result})
-
-                else:
-
-                    self.node_status_queues[node].put({'text': "nvidia-smi didn't finish in time"})
 
         for node, connection in self.connections.items():
-            connection.logout()
-
+            connection.close()
 
 if __name__ == "__main__":
 
