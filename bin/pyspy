@@ -89,6 +89,7 @@ import getpass
 import multiprocessing
 import os
 import paramiko
+import time
 
 nodes = ['slowpoke1', 'slowpoke2', 'slowpoke3', 'slowpoke4']
 spy_command = os.path.abspath(__file__)
@@ -111,9 +112,10 @@ class Spy:
         self.node_status = { node: {'text': "[unknown]"} for node in nodes }
 
         self.stop = multiprocessing.Event()
-        self.update_node_status_worker = multiprocessing.Process(target=self.__get_node_infos)
+        self.update_node_status_workers = { node: multiprocessing.Process(target=self.__get_node_infos, args=(node,)) for node in nodes }
         self.stop.clear()
-        self.update_node_status_worker.start()
+        for node, worker in self.update_node_status_workers.items():
+            worker.start()
 
     def update_status(self, status):
         self.status_queue.put(status)
@@ -126,6 +128,7 @@ class Spy:
 
             char = self.screen.getch()
             if char == curses.ERR:
+                time.sleep(0.1)
                 continue
 
             if char == curses.KEY_UP or char == ord('k'):
@@ -159,7 +162,8 @@ class Spy:
 
         self.stop.set()
         curses.endwin()
-        self.update_node_status_worker.join()
+        for node, worker in self.update_node_status_workers.items():
+            worker.join()
 
     def __draw_node_status(self, node, status, y, x):
 
@@ -207,41 +211,36 @@ class Spy:
 
             self.node_status[node] = status
 
-    def __get_node_infos(self):
+    def __get_node_infos(self, node):
 
         parent_pid = os.getppid()
 
-        for node in nodes:
-            self.node_status_queues[node].put({'text': "connecting..."})
-            connection = paramiko.SSHClient()
-            connection.load_system_host_keys()
-            connection.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            connection.connect(node)
-            self.connections[node] = connection
-            self.node_status_queues[node].put({'text': "connected"})
+        self.node_status_queues[node].put({'text': "connecting..."})
+        connection = paramiko.SSHClient()
+        connection.load_system_host_keys()
+        connection.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        connection.connect(node)
+        self.connections[node] = connection
+        self.node_status_queues[node].put({'text': "connected"})
 
         while not self.stop.is_set():
 
             if os.getppid() != parent_pid:
-                logger.error("parent of producer pool died, shutting down")
+                logger.error("parent died, shutting down")
                 break
 
-            for node, connection in self.connections.items():
+            self.update_status("calling " + spy_command + " on " + node)
+            stdin, stdout, stderr = connection.exec_command(spy_command + ' --raw-node-stats')
+            result = ''.join([l for l in stdout ])
 
-                self.update_status("calling " + spy_command + " on " + node)
-                stdin, stdout, stderr = connection.exec_command(spy_command + ' --raw-node-stats')
-                result = ''.join([l for l in stdout ])
+            try:
+                result = json.loads(result)
+                self.node_status_queues[node].put({'node_stats': result})
+            except:
+                self.node_status_queues[node].put({'text': "Couldn't deserialize " + result})
+                raise
 
-                try:
-                    result = json.loads(result)
-                    self.node_status_queues[node].put({'node_stats': result})
-                except:
-                    self.node_status_queues[node].put({'text': "Couldn't deserialize " + result})
-                    raise
-
-
-        for node, connection in self.connections.items():
-            connection.close()
+        connection.close()
 
 if __name__ == "__main__":
 
