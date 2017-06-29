@@ -1,4 +1,5 @@
 #!/usr/bin/python
+# -*- coding: utf-8 -*-
 
 #############################################################################
 # --raw-node-state version
@@ -22,25 +23,44 @@ if args.raw_node_stats:
     result = check_output(
             [
                 'nvidia-smi',
-                '--query-gpu=utilization.memory,utilization.gpu',
+                '--query-gpu=gpu_bus_id,utilization.memory,utilization.gpu',
                 '--format=noheader,csv'
             ]
     )
 
-    gpu_stats = []
-    gpu = 0
+    gpu_stats = {}
     for line in result.split('\n'):
         if line == '':
             continue
         tokens = line.split(',')
-        mem_percent = float(tokens[0][:-1])
-        gpu_percent = float(tokens[1][:-1])
-        gpu_stats.append({
-            'gpu':gpu,
+        bus_id = tokens[0]
+        mem_percent = float(tokens[1][:-1])
+        gpu_percent = float(tokens[2][:-1])
+        gpu_stats[bus_id] = {
+            'bus_id':bus_id,
             'mem_percent':mem_percent,
             'gpu_percent':gpu_percent
+        }
+
+    result = check_output(
+            [
+                'nvidia-smi',
+                '--query-compute-apps=gpu_bus_id,pid',
+                '--format=noheader,csv'
+            ]
+    )
+
+    gpu_process_stats = []
+    for line in result.split('\n'):
+        if line == '':
+            continue
+        tokens = line.split(',')
+        bus_id = tokens[0]
+        pid = int(tokens[1])
+        gpu_process_stats.append({
+            'bus_id':bus_id,
+            'pid':pid
         })
-        gpu += 1
 
     result = check_output(
             [
@@ -68,10 +88,10 @@ if args.raw_node_stats:
             'created': line[idx_created:idx_status].strip(),
             'status': line[idx_status:idx_ports].strip(),
             'ports': line[idx_ports:idx_names].strip(),
-            'names': line[idx_names:].strip(),
+            'name': line[idx_names:].strip(),
         })
 
-    stats = { 'gpu_stats': gpu_stats, 'docker_stats': docker_stats }
+    stats = { 'gpu_stats': gpu_stats, 'gpu_process_stats': gpu_process_stats, 'docker_stats': docker_stats }
     print json.dumps(stats)
 
     sys.exit(0)
@@ -84,19 +104,111 @@ try:
     import Queue
 except:
     import queue as Queue
+import copy
 import curses
 import getpass
 import multiprocessing
 import os
 import paramiko
 import time
+import traceback
 
 nodes = ['slowpoke1', 'slowpoke2', 'slowpoke3', 'slowpoke4']
 spy_command = os.path.abspath(__file__)
 
+class Tasks:
+
+    def __init__(self):
+        self.__tasks = {}
+
+    def update(self, task_report):
+
+        self.__tasks = {}
+        for task in task_report:
+            self.__tasks[task['job_id']] = task
+
+    def get_job_ids(self):
+        job_ids = self.__tasks.keys()
+        job_ids.sort()
+        return job_ids
+
+    def get_task(self, job_id):
+        if job_id in self.__tasks:
+            return self.__tasks[job_id]
+        return None
+
+class DockerContainers:
+
+    def __init__(self):
+        self.__containers = {}
+
+    def update(self, node, node_report):
+
+        self.__containers[node] = {}
+        containers = self.__containers[node]
+        for container in node_report['docker_stats']:
+            containers[container['name']] = container
+
+    def get_container(self, container_name):
+
+        for node,containers in self.__containers.items():
+            if container_name not in containers:
+                continue
+            return containers[container_name]
+
+        return None
+
+class GpuUsages:
+
+    def __init__(self):
+        self.__usages = {}
+
+    def update(self, node, node_report):
+
+        self.__usages[node] = {}
+        usages = self.__usages[node]
+
+        # map bus ids to gpu nums (assuming gpus are numbered in increasing bus 
+        # id)
+        gpu_num = {}
+        gpu = 0
+        bus_ids = [b for b,_ in node_report['gpu_stats'].items()]
+        bus_ids.sort()
+        for bus_id in bus_ids:
+            gpu_num[bus_id] = gpu
+            gpu += 1
+
+        for process in node_report['gpu_process_stats']:
+            bus_id = process['bus_id']
+            usage = copy.copy(node_report['gpu_stats'][bus_id])
+            usage['pid'] = process['pid']
+            usage['gpu'] = gpu_num[bus_id]
+            usages[process['pid']] = usage
+
+    def get_usages(self, node):
+
+        if node not in self.__usages:
+            return None
+
+        return self.__usages[node]
+
+    def get_usage(self, node, pid):
+
+        if node not in self.__usages:
+            return None
+
+        if pid not in self.__usages[node]:
+            return None
+
+        return self.__usages[node][pid]
+
 class Spy:
 
     def __init__(self):
+
+        self.tasks = Tasks()
+        self.docker_containers = DockerContainers()
+        self.gpu_usages = GpuUsages()
 
         self.screen = curses.initscr()
         self.screen.nodelay(1)
@@ -108,120 +220,246 @@ class Spy:
         self.connections = {}
         self.status_queue = multiprocessing.Queue(100)
         self.status = "Started"
-        self.node_status_queues = { node: multiprocessing.Queue(10) for node in nodes }
-        self.node_status = { node: {'text': "[unknown]"} for node in nodes }
+        self.node_report_queues = { node: multiprocessing.Queue(10) for node in nodes }
 
         self.stop = multiprocessing.Event()
-        self.update_node_status_workers = { node: multiprocessing.Process(target=self.__get_node_infos, args=(node,)) for node in nodes }
+        self.update_node_report_workers = { node: multiprocessing.Process(target=self.__get_node_reports, args=(node,)) for node in nodes }
         self.stop.clear()
-        for node, worker in self.update_node_status_workers.items():
+        for node, worker in self.update_node_report_workers.items():
             worker.start()
 
-    def update_status(self, status):
+    def update_status_line(self, status):
+        '''Update the status line at the bottom. Can be called from any process, 
+        statuses will be shown in order received.'''
+
         self.status_queue.put(status)
 
     def main_loop(self):
 
-        while True:
-
-            self.redraw()
-
-            char = self.screen.getch()
-            if char == curses.ERR:
-                time.sleep(0.1)
-                continue
-
-            if char == curses.KEY_UP or char == ord('k'):
-                self.status = "Up key pressed"
-            if char == curses.KEY_DOWN or char == ord('j'):
-                self.status = "Down key pressed"
-            if char == ord('q'):
-                break
-            if char == ord('e'):
-                raise RuntimeException("Blarg...")
-
-    def redraw(self):
-
-        self.screen.erase()
-
-        # node status
-        self.__update_node_status()
-        i = 0
-        for node in nodes:
-            status = self.node_status[node]
-            self.__draw_node_status(node, status, 3,i*30)
-            i += 1
-
-        # global status
-        self.__update_status()
-        self.screen.addstr(curses.LINES - 1, 0, self.status)
-
-        self.screen.refresh()
+        while not self.stop.is_set():
+            self.__redraw()
+            if not self.__read_input():
+                time.sleep(0.01)
 
     def teardown(self):
 
         self.stop.set()
         curses.endwin()
-        for node, worker in self.update_node_status_workers.items():
+        for node, worker in self.update_node_report_workers.items():
             worker.join()
 
-    def __draw_node_status(self, node, status, y, x):
+    def __redraw(self):
 
-        col_width = 10
+        self.screen.erase()
+        self.height, self.width = self.screen.getmaxyx()
 
-        if 'text' in status:
+        y = 3
+        y += self.__draw_tasks(y, 1)
+        y += 1
+        y += self.__draw_nodes(y, 1)
 
-            self.screen.addstr(y, x, node + ": " + status['text'])
+        self.__draw_status_line()
 
-        elif 'node_stats' in status:
+        self.screen.refresh()
 
-            stats = status['node_stats']
+    def __read_input(self):
 
-            # GPU usage
+        char = self.screen.getch()
+        if char == curses.ERR:
+            return False
 
-            self.screen.addstr(y, x, '#GPU'.ljust(col_width) + 'Mem %'.ljust(col_width) + 'GPU %'.ljust(col_width))
+        if char == curses.KEY_UP or char == ord('k'):
+            self.status = "Up key pressed"
+        if char == curses.KEY_DOWN or char == ord('j'):
+            self.status = "Down key pressed"
+        if char == ord('q'):
+            self.stop.set()
+        if char == ord('e'):
+            raise RuntimeException("Blarg...")
 
-            for gpu_stats in stats['gpu_stats']:
+        return True
 
-                gpu = gpu_stats['gpu']
-                mem_percent = gpu_stats['mem_percent']
-                gpu_percent = gpu_stats['gpu_percent']
-                self.screen.addstr(y + gpu + 1, x,
-                        str(gpu).ljust(col_width) +
-                        str(mem_percent).ljust(col_width) +
-                        str(gpu_percent).ljust(col_width)
+    def __draw_tasks(self, y, x):
+
+        self.__integrate_task_report()
+
+        job_ids = self.tasks.get_job_ids()
+
+        if len(job_ids) == 0:
+            self.__draw_str(y, x, "[no running tasks]")
+            return
+
+        column_widths = [5, 8, -1, 4, 4, 11, 8, 8, 8]
+        self.__draw_str(
+                y, x,
+                self.__format_row(
+                        ["JOBID", "USER", "COMMAND", "GPUS", "CPUS", "TIME", "STATE", "NAME", "NODE"],
+                        column_widths,
+                        header=True
                 )
+        )
 
+        k = 0
+        for job_id in job_ids:
+            k += 1
+            task = self.tasks.get_task(job_id)
+            self.__draw_str(
+                    y + k, x,
+                    self.__format_row(
+                        [task[key] for key in ['job_id', 'user', 'comment', 'gpus', 'cpus', 'time', 'state', 'name', 'nodes']],
+                        column_widths
+                    )
+            )
+
+        return k+1
+
+
+    def __draw_nodes(self, y, x):
+
+        self.__integrate_node_reports()
+
+        lines = 0
+        column_widths = [3, 8, 6, 6]
+        width = sum(column_widths) + len(column_widths) - 1
+        step = max(0, width + (self.width - 2 - len(nodes)*width)/(len(nodes) - 1))
+
+        i = 0
+        for node in nodes:
+            lines = max(lines, self.__draw_node_summary(node, column_widths, y, x + i*step))
+            i += 1
+
+        return lines
+
+    def __draw_status_line(self):
+
+        self.__update_status()
+        self.__draw_str(self.height - 1, 0, self.status)
+
+    def __draw_node_summary(self, node, column_widths, y, x):
+
+        usages = self.gpu_usages.get_usages(node)
+
+        if usages is None:
+            self.__draw_str(y, x, "[unknown]")
+            return 0
+
+        self.__draw_str(
+                y, x,
+                self.__format_row(
+                        ["GPU", "PID", "MEM %", "UTIL %"],
+                        column_widths,
+                        header=True
+                )
+        )
+        k = 0
+        for pid, usage in usages.items():
+            k += 1
+            self.__draw_str(
+                    y + k, x,
+                    self.__format_row(
+                        [usage['gpu'], usage['pid'], usage['mem_percent'], usage['gpu_percent']],
+                        column_widths
+                    )
+            )
+
+        return k+1
+
+    def __format_row(self, fields, column_widths, header=False, separator=" "):
+
+        stretches = column_widths.count(-1)
+        stretch_width = 0
+
+        if stretches > 0:
+            min_width = 0
+            for w in column_widths:
+                if w > 0:
+                    min_width += w
+            min_width += (len(column_widths)-1)*len(separator)
+            stretch_width = max(0, (self.width - 2 - min_width)/stretches)
+
+        stretch = lambda c: c if c >= 0 else stretch_width
+
+        return separator.join(
+                [str(f)[:stretch(c)].ljust(stretch(c)) for f,c in zip(fields, column_widths)]
+        )
+
+    def __draw_str(self, y, x, text):
+        if y >= self.height or x >= self.width:
+            return
+        self.screen.addnstr(y, x, text, max(0, self.width - x - 1))
 
     def __update_status(self):
 
         while not self.status_queue.empty():
             self.status = self.status_queue.get()
 
-    def __update_node_status(self):
+    def __integrate_task_report(self):
+
+        task_report = self.__get_task_report()
+        self.tasks.update(task_report)
+
+    def __get_task_report(self):
+
+        result = check_output(
+                [
+                    'squeue',
+                    '-h',
+                    '-o',
+                    # JOBID USER COMMENT GRES CPUS TIME STATE NAME 
+                    # NODELIST(REASON)
+                    '%Aß%uß%kß%bß%Cß%Mß%Tß%jß%R'
+                ]
+        )
+
+        task_report = []
+        for line in result.split('\n'):
+            if line == '':
+                continue
+            tokens = line.split('ß')
+            task_report.append({
+                    'job_id': int(tokens[0]),
+                    'user': tokens[1],
+                    'comment': tokens[2],
+                    'gpus': int(tokens[3][4:]),
+                    'cpus': int(tokens[4]),
+                    'time': tokens[5],
+                    'state': tokens[6],
+                    'name': tokens[7],
+                    'nodes': tokens[8],
+            })
+
+        return task_report
+
+    def __integrate_node_reports(self):
+        '''Get the most recent node report for each node and update statistics.'''
 
         for node in nodes:
 
-            # get the most recent node status
-            status = None
-            while not self.node_status_queues[node].empty():
-                status = self.node_status_queues[node].get()
-            if status is None:
+            report = None
+            while not self.node_report_queues[node].empty():
+                report = self.node_report_queues[node].get()
+                if 'status' in report:
+                    self.update_status_line(node + ": " + report['status'])
+                if 'error' in report:
+                    self.update_status_line("ERROR: " + node + report['error'])
+            if report is None:
                 continue
 
-            self.node_status[node] = status
+            if 'node_stats' in report:
+                self.docker_containers.update(node, report['node_stats'])
+                self.gpu_usages.update(node, report['node_stats'])
 
-    def __get_node_infos(self, node):
+    def __get_node_reports(self, node):
 
         parent_pid = os.getppid()
 
-        self.node_status_queues[node].put({'text': "connecting..."})
+        self.node_report_queues[node].put({'status': "connecting..."})
         connection = paramiko.SSHClient()
         connection.load_system_host_keys()
         connection.set_missing_host_key_policy(paramiko.AutoAddPolicy())
         connection.connect(node)
         self.connections[node] = connection
-        self.node_status_queues[node].put({'text': "connected"})
+        self.node_report_queues[node].put({'status': "connected"})
 
         while not self.stop.is_set():
 
@@ -229,15 +467,15 @@ class Spy:
                 logger.error("parent died, shutting down")
                 break
 
-            self.update_status("calling " + spy_command + " on " + node)
+            self.update_status_line("calling " + spy_command + " on " + node)
             stdin, stdout, stderr = connection.exec_command(spy_command + ' --raw-node-stats')
             result = ''.join([l for l in stdout ])
 
             try:
                 result = json.loads(result)
-                self.node_status_queues[node].put({'node_stats': result})
+                self.node_report_queues[node].put({'node_stats': result})
             except:
-                self.node_status_queues[node].put({'text': "Couldn't deserialize " + result})
+                self.node_report_queues[node].put({'error': "Couldn't deserialize " + result})
                 raise
 
         connection.close()
@@ -248,6 +486,7 @@ if __name__ == "__main__":
     try:
         spy.main_loop()
     except:
+        traceback.print_exc()
         spy.teardown()
         raise
     spy.teardown()
