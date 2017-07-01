@@ -18,6 +18,7 @@ do \
     sudo cp bin/run_slurm /usr/bin && \
     sudo cp bin/run_docker /usr/bin && \
     sudo cp bin/spy /usr/bin && \
+    sudo apt-get install python-paramiko -y && \
     echo 'All configuration updated' && \
     (sudo mkdir /dev/cpuset || true) && \
     (sudo mount -t cpuset cpuset /dev/cpuset || true) && \
