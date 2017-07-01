@@ -204,20 +204,13 @@ class GpuUsages:
 
 class Spy:
 
-    def __init__(self):
+    def __init__(self, screen):
 
         self.tasks = Tasks()
         self.docker_containers = DockerContainers()
         self.gpu_usages = GpuUsages()
 
-        self.screen = curses.initscr()
-        curses.start_color()
-        for i in range(1, 256):
-            curses.init_pair(i, i, 0)
-        curses.curs_set(0)
-        curses.noecho()
-        self.screen.nodelay(1)
-        self.screen.keypad(1)
+        self.screen = screen
 
         self.connections = {}
         self.status_queue = multiprocessing.Queue(100)
@@ -247,8 +240,7 @@ class Spy:
     def teardown(self):
 
         self.stop.set()
-        curses.endwin()
-        print("Closing connections...")
+        self.status = "Closing connections..."
         for node, worker in self.update_node_report_workers.items():
             worker.terminate()
         for node, worker in self.update_node_report_workers.items():
@@ -488,9 +480,17 @@ class Spy:
 
         connection.close()
 
-if __name__ == "__main__":
+def run_curses(screen):
 
-    spy = Spy()
+    curses.start_color()
+    for i in range(1, 256):
+        curses.init_pair(i, i, 0)
+    curses.curs_set(0)
+    curses.noecho()
+    screen.nodelay(1)
+    screen.keypad(1)
+
+    spy = Spy(screen)
     try:
         spy.main_loop()
     except:
@@ -498,3 +498,7 @@ if __name__ == "__main__":
         spy.teardown()
         raise
     spy.teardown()
+
+
+if __name__ == "__main__":
+    curses.wrapper(run_curses)
