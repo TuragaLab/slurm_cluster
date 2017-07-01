@@ -291,6 +291,7 @@ class Spy:
         self.slurm_processes = SlurmProcesses()
 
         self.screen = screen
+        self.color = curses.color_pair(0)
 
         self.connections = {}
         self.status_queue = multiprocessing.Queue(100)
@@ -331,7 +332,7 @@ class Spy:
         self.screen.erase()
         self.height, self.width = self.screen.getmaxyx()
 
-        y = 3
+        y = 1
         y += self.__draw_tasks(y, 1)
         y += 1
         y += self.__draw_nodes(y, 1)
@@ -362,35 +363,25 @@ class Spy:
 
         self.__integrate_task_report()
 
+        self.color = curses.color_pair(0)
+        self.__draw_str(y, x, 'slurm tasks:')
+        self.__draw_str(y+1, x, '------------')
+
         job_ids = self.tasks.get_job_ids()
 
         if len(job_ids) == 0:
-            self.__draw_str(y, x, "[no running tasks]")
+            self.__draw_str(y+2, x, "[no running tasks]")
             return
 
         column_widths = [5, 8, -1, 4, 4, 11, 8, 8, 8]
-        self.__draw_str(
-                y, x,
-                self.__format_row(
-                        ["JOBID", "USER", "COMMAND", "GPUS", "CPUS", "TIME", "STATE", "NAME", "NODE"],
-                        column_widths,
-                        header=True
-                )
-        )
-
-        k = 0
+        table = []
+        table.append(["JOBID", "USER", "COMMAND", "GPUS", "CPUS", "TIME", "STATE", "NAME", "NODE"])
         for job_id in job_ids:
-            k += 1
             task = self.tasks.get_task(job_id)
-            self.__draw_str(
-                    y + k, x,
-                    self.__format_row(
-                        [task[key] for key in ['job_id', 'user', 'comment', 'gpus', 'cpus', 'time', 'state', 'name', 'nodes']],
-                        column_widths
-                    )
-            )
+            table.append([task[key] for key in ['job_id', 'user', 'comment', 'gpus', 'cpus', 'time', 'state', 'name', 'nodes']])
 
-        return k+1
+        r,c = self.__draw_table(y+2, x, table, column_widths)
+        return r+2
 
 
     def __draw_nodes(self, y, x):
@@ -416,34 +407,41 @@ class Spy:
 
     def __draw_node_summary(self, node, column_widths, y, x):
 
+        self.color = curses.color_pair(0)
+        self.__draw_str(y, x, node + ':')
+        self.__draw_str(y+1, x, '-'*(len(node) + 1))
+
         usages = self.gpu_usages.get_usages(node)
 
         if usages is None:
-            self.__draw_str(y, x, "[unknown]")
+            self.__draw_str(y+2, x, "[unknown]")
             return 0
 
-        self.__draw_str(
-                y, x,
-                self.__format_row(
-                        ["GPU", "PID", "MEM %", "UTIL %"],
-                        column_widths,
-                        header=True
-                )
-        )
-        k = 0
+        table = []
+        table.append(["GPU", "PID", "MEM %", "UTIL %"])
         for pid, usage in usages.items():
-            k += 1
-            self.__draw_str(
-                    y + k, x,
-                    self.__format_row(
-                        [usage['gpu'], usage['pid'], usage['mem_percent'], usage['gpu_percent']],
-                        column_widths
-                    )
-            )
+            table.append([usage['gpu'], pid, usage['mem_percent'], usage['gpu_percent']])
 
-        return k+1
+        r,c = self.__draw_table(y+2, x, table, column_widths)
+        return r+2
 
-    def __format_row(self, fields, column_widths, header=False, separator=" "):
+    def __draw_table(self, y, x, data, column_widths, row_colors=None):
+
+        if len(data) == 0:
+            return 0, 0
+
+        header = self.__format_row(data[0], column_widths)
+        self.color = curses.color_pair(0)
+        self.__draw_str(y, x, header)
+        i = 0
+        for i in range(1, len(data)):
+            row = self.__format_row(data[i], column_widths)
+            self.color = row_colors[i] if row_colors is not None else curses.color_pair(i)
+            self.__draw_str(y+i, x, row)
+
+        return i+1, len(header)
+
+    def __format_row(self, fields, column_widths, separator=" "):
 
         stretches = column_widths.count(-1)
         stretch_width = 0
@@ -465,8 +463,7 @@ class Spy:
     def __draw_str(self, y, x, text):
         if y >= self.height or x >= self.width:
             return
-        self.screen.addnstr(y, x, text, max(0, self.width - x - 1), curses.color_pair(y%256))
-        # self.screen.addnstr(y, x, text, max(0, self.width - x - 1))
+        self.screen.addnstr(y, x, text, max(0, self.width - x - 1), self.color)
 
     def __update_status(self):
 
