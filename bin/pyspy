@@ -211,11 +211,13 @@ class Spy:
         self.gpu_usages = GpuUsages()
 
         self.screen = curses.initscr()
-        self.screen.nodelay(1)
-        self.screen.keypad(1)
         curses.start_color()
+        for i in range(1, 256):
+            curses.init_pair(i, i, 0)
         curses.curs_set(0)
         curses.noecho()
+        self.screen.nodelay(1)
+        self.screen.keypad(1)
 
         self.connections = {}
         self.status_queue = multiprocessing.Queue(100)
@@ -240,11 +242,15 @@ class Spy:
             self.__redraw()
             if not self.__read_input():
                 time.sleep(0.01)
+        self.__redraw()
 
     def teardown(self):
 
         self.stop.set()
         curses.endwin()
+        print("Closing connections...")
+        for node, worker in self.update_node_report_workers.items():
+            worker.terminate()
         for node, worker in self.update_node_report_workers.items():
             worker.join()
 
@@ -274,6 +280,7 @@ class Spy:
             self.status = "Down key pressed"
         if char == ord('q'):
             self.stop.set()
+            self.status = "Quitting..."
         if char == ord('e'):
             raise RuntimeException("Blarg...")
 
@@ -386,7 +393,8 @@ class Spy:
     def __draw_str(self, y, x, text):
         if y >= self.height or x >= self.width:
             return
-        self.screen.addnstr(y, x, text, max(0, self.width - x - 1))
+        self.screen.addnstr(y, x, text, max(0, self.width - x - 1), curses.color_pair(y%256))
+        # self.screen.addnstr(y, x, text, max(0, self.width - x - 1))
 
     def __update_status(self):
 
