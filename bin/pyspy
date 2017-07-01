@@ -20,6 +20,55 @@ args = parser.parse_args()
 
 if args.raw_node_stats:
 
+    # slurmstepd processes
+
+    try:
+        result = check_output(
+                [
+                    'ps h -o pid,command -p `pgrep slurmstepd`'
+                ],
+                shell=True
+        )
+    except:
+        result = ''
+
+    slurm_stats = []
+    for line in result.split('\n'):
+        if line == '':
+            continue
+        tokens = line.split()
+        pid = int(tokens[0])
+        job_step = tokens[2][1:-1].split('.')
+        job_id = int(job_step[0])
+        step = int(job_step[1])
+        slurm_process = {
+                'pid': pid,
+                'job_id': job_id,
+                'step': step
+        }
+        # get the process tree
+        pids = [pid]
+        tree = {}
+        while len(pids) != 0:
+            parent = pids.pop(0)
+            tree[parent] = []
+            result = check_output(
+                    [
+                        'pgrep -P ' + str(parent) + ' || true' # don't fail
+                    ],
+                    shell=True
+            )
+            for line in result.split('\n'):
+                if line == '':
+                    continue
+                child = int(line)
+                tree[parent].append(child)
+            pids += tree[parent]
+        slurm_process['child_processes'] = tree[pid]
+        slurm_stats.append(slurm_process)
+
+    # GPU usage information
+
     result = check_output(
             [
                 'nvidia-smi',
@@ -42,6 +91,8 @@ if args.raw_node_stats:
             'gpu_percent':gpu_percent
         }
 
+    # GPU process information
+
     result = check_output(
             [
                 'nvidia-smi',
@@ -61,6 +112,8 @@ if args.raw_node_stats:
             'bus_id':bus_id,
             'pid':pid
         })
+
+    # running docker images
 
     result = check_output(
             [
@@ -91,7 +144,12 @@ if args.raw_node_stats:
             'name': line[idx_names:].strip(),
         })
 
-    stats = { 'gpu_stats': gpu_stats, 'gpu_process_stats': gpu_process_stats, 'docker_stats': docker_stats }
+    stats = {
+            'gpu_stats': gpu_stats,
+            'gpu_process_stats': gpu_process_stats,
+            'docker_stats': docker_stats,
+            'slurm_stats': slurm_stats
+    }
     print json.dumps(stats)
 
     sys.exit(0)
@@ -202,6 +260,27 @@ class GpuUsages:
 
         return self.__usages[node][pid]
 
+class SlurmProcesses:
+
+    def __init__(self):
+        self.__processes = {}
+
+    def update(self, node, node_report):
+
+        self.__processes[node] = {}
+        processes = self.__processes[node]
+        for process in node_report['slurm_stats']:
+            processes[process['job_id']] = process
+
+    def get_process(self, job_id):
+
+        for node,processes in self.__processes.items():
+            if job_id not in processes:
+                continue
+            return processes[job_id]
+
+        return None
+
 class Spy:
 
     def __init__(self, screen):
@@ -209,6 +288,7 @@ class Spy:
         self.tasks = Tasks()
         self.docker_containers = DockerContainers()
         self.gpu_usages = GpuUsages()
+        self.slurm_processes = SlurmProcesses()
 
         self.screen = screen
 
@@ -448,6 +528,7 @@ class Spy:
             if 'node_stats' in report:
                 self.docker_containers.update(node, report['node_stats'])
                 self.gpu_usages.update(node, report['node_stats'])
+                self.slurm_processes.update(node, report['node_stats'])
 
     def __get_node_reports(self, node):
 
