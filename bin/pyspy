@@ -207,6 +207,13 @@ class DockerContainers:
         for container in node_report['docker_stats']:
             containers[container['name']] = container
 
+    def get_containers(self, node):
+
+        if node not in self.__containers:
+            return None
+
+        return self.__containers[node]
+
     def get_container(self, container_name):
 
         for node,containers in self.__containers.items():
@@ -364,13 +371,14 @@ class Spy:
         self.__integrate_task_report()
 
         self.color = curses.color_pair(0)
-        self.__draw_str(y, x, 'slurm tasks:')
-        self.__draw_str(y+1, x, '------------')
+        k = 0
+        self.__draw_str(y+k, x, "SLURM STATUS " + '-'*self.width)
+        k += 2
 
         job_ids = self.tasks.get_job_ids()
 
         if len(job_ids) == 0:
-            self.__draw_str(y+2, x, "[no running tasks]")
+            self.__draw_str(y+k, x, "[no running tasks]")
             return
 
         column_widths = [5, 8, -1, 4, 4, 11, 8, 8, 8]
@@ -380,13 +388,29 @@ class Spy:
             task = self.tasks.get_task(job_id)
             table.append([task[key] for key in ['job_id', 'user', 'comment', 'gpus', 'cpus', 'time', 'state', 'name', 'nodes']])
 
-        r,c = self.__draw_table(y+2, x, table, column_widths)
-        return r+2
+        r,c = self.__draw_table(y+k, x, table, column_widths)
+        return r+k
 
 
     def __draw_nodes(self, y, x):
 
         self.__integrate_node_reports()
+
+        self.color = curses.color_pair(0)
+        k = 0
+        self.__draw_str(y+k, x, "GPU USAGE " + '-'*self.width)
+        k += 2
+        k += self.__draw_nodes_gpu_usage(y+k, x)
+        k += 1
+        self.color = curses.color_pair(0)
+        k += 1
+        self.__draw_str(y+k, x, "DOCKER CONTAINERS " + '-'*self.width)
+        k += 2
+        k += self.__draw_nodes_docker_containers(y+k, x)
+
+        return k
+
+    def __draw_nodes_gpu_usage(self, y, x):
 
         lines = 0
         column_widths = [3, 8, 6, 6]
@@ -395,7 +419,21 @@ class Spy:
 
         i = 0
         for node in nodes:
-            lines = max(lines, self.__draw_node_summary(node, column_widths, y, x + i*step))
+            lines = max(lines, self.__draw_node_gpu_usage(node, column_widths, y, x + i*step))
+            i += 1
+
+        return lines
+
+    def __draw_nodes_docker_containers(self, y, x):
+
+        lines = 0
+        column_widths = [14, 10, 16]
+        width = sum(column_widths) + len(column_widths) - 1
+        step = max(0, width + (self.width - 2 - len(nodes)*width)/(len(nodes) - 1))
+
+        i = 0
+        for node in nodes:
+            lines = max(lines, self.__draw_node_docker_containers(node, column_widths, y, x + i*step))
             i += 1
 
         return lines
@@ -403,9 +441,10 @@ class Spy:
     def __draw_status_line(self):
 
         self.__update_status()
+        self.color = curses.color_pair(8)
         self.__draw_str(self.height - 1, 0, self.status)
 
-    def __draw_node_summary(self, node, column_widths, y, x):
+    def __draw_node_gpu_usage(self, node, column_widths, y, x):
 
         self.color = curses.color_pair(0)
         self.__draw_str(y, x, node + ':')
@@ -421,6 +460,26 @@ class Spy:
         table.append(["GPU", "PID", "MEM %", "UTIL %"])
         for pid, usage in usages.items():
             table.append([usage['gpu'], pid, usage['mem_percent'], usage['gpu_percent']])
+
+        r,c = self.__draw_table(y+2, x, table, column_widths)
+        return r+2
+
+    def __draw_node_docker_containers(self, node, column_widths, y, x):
+
+        self.color = curses.color_pair(0)
+        self.__draw_str(y, x, node + ':')
+        self.__draw_str(y+1, x, '-'*(len(node) + 1))
+
+        containers = self.docker_containers.get_containers(node)
+
+        if containers is None:
+            self.__draw_str(y+2, x, "[unknown]")
+            return 0
+
+        table = []
+        table.append(["NAME", "IMAGE", "STATUS"])
+        for name, container in containers.items():
+            table.append([name, container['image'], container['status']])
 
         r,c = self.__draw_table(y+2, x, table, column_widths)
         return r+2
