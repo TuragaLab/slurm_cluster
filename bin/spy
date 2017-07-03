@@ -428,7 +428,7 @@ class Spy:
         while not self.stop.is_set():
             self.__redraw()
             if not self.__read_input():
-                time.sleep(0.01)
+                time.sleep(0.1)
         self.__redraw()
 
     def teardown(self):
