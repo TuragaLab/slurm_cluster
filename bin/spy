@@ -588,7 +588,7 @@ class Spy:
         for pid, usage in usages.items():
             table.append([usage['gpu'], self.__get_job_id(node, pid), pid, usage['mem_percent'], usage['gpu_percent']])
 
-        r,c = self.__draw_table(y+2, x, table, column_widths, row_colors=lambda i,row: self.job_id_color[row[1]])
+        r,c = self.__draw_table(y+2, x, table, column_widths, row_colors=lambda i,row: self.job_id_color[row[1]], sort_by_column=0)
         return r+2
 
     def __get_job_id(self, node, pid):
@@ -615,16 +615,19 @@ class Spy:
         for name, container in containers.items():
             table.append([name, container['job_id'], container['image'], container['status']])
 
-        r,c = self.__draw_table(y+2, x, table, column_widths, row_colors=lambda i,row: self.job_id_color[row[1]])
+        r,c = self.__draw_table(y+2, x, table, column_widths, row_colors=lambda i,row: self.job_id_color[row[1]], sort_by_column=1)
         return r+2
 
-    def __draw_table(self, y, x, data, column_widths, row_colors=None):
+    def __draw_table(self, y, x, data, column_widths, row_colors=None, sort_by_column=None):
 
         if len(data) == 0:
             return 0, 0
 
         if row_colors is None:
             row_colors = lambda i,row: i
+
+        if sort_by_column is not None:
+            data[1:] = sorted(data[1:],cmp=lambda r1,r2: cmp(r1[sort_by_column],r2[sort_by_column]))
 
         header = self.__format_row(data[0], column_widths)
         self.color = curses.color_pair(0)
