@@ -299,6 +299,17 @@ class Spy:
 
         self.screen = screen
         self.color = curses.color_pair(0)
+        self.color_groups = [
+                [40+i for i in range(6)],
+                [124+i for i in range(6)],
+                [172+i for i in range(6)],
+                [190+i for i in range(6)],
+                [214+i for i in range(6)],
+        ]
+        self.next_color_group = 0
+        self.next_color = [ 0 for g in self.color_groups ]
+        self.user_color_group = {}
+        self.job_id_color = {}
 
         self.connections = {}
         self.status_queue = multiprocessing.Queue(100)
@@ -369,6 +380,7 @@ class Spy:
     def __draw_tasks(self, y, x):
 
         self.__integrate_task_report()
+        self.__update_color_map()
 
         self.color = curses.color_pair(0)
         k = 0
@@ -388,9 +400,29 @@ class Spy:
             task = self.tasks.get_task(job_id)
             table.append([task[key] for key in ['job_id', 'user', 'comment', 'gpus', 'cpus', 'time', 'state', 'name', 'nodes']])
 
-        r,c = self.__draw_table(y+k, x, table, column_widths)
+        r,c = self.__draw_table(y+k, x, table, column_widths, row_colors=lambda i,row: self.job_id_color[row[0]])
         return r+k
 
+    def __update_color_map(self):
+        '''Assign each slurm task a color.'''
+
+        for job_id in self.tasks.get_job_ids():
+
+            if job_id not in self.job_id_color:
+
+                task = self.tasks.get_task(job_id)
+                user = task['user']
+
+                if user not in self.user_color_group:
+                    self.user_color_group[user] = self.next_color_group
+                    self.next_color_group = (self.next_color_group + 1)%len(self.color_groups)
+
+                color_group_number = self.user_color_group[user]
+
+                color = self.color_groups[color_group_number][self.next_color[color_group_number]]
+                self.next_color[color_group_number] = (self.next_color[color_group_number]+1)%len(self.color_groups[color_group_number])
+
+                self.job_id_color[job_id] = color
 
     def __draw_nodes(self, y, x):
 
@@ -489,13 +521,16 @@ class Spy:
         if len(data) == 0:
             return 0, 0
 
+        if row_colors is None:
+            row_colors = lambda i,row: i
+
         header = self.__format_row(data[0], column_widths)
         self.color = curses.color_pair(0)
         self.__draw_str(y, x, header)
         i = 0
         for i in range(1, len(data)):
             row = self.__format_row(data[i], column_widths)
-            self.color = row_colors[i] if row_colors is not None else curses.color_pair(i)
+            self.color = curses.color_pair(row_colors(i, data[i]))
             self.__draw_str(y+i, x, row)
 
         return i+1, len(header)
