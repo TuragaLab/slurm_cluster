@@ -64,8 +64,52 @@ if args.raw_node_stats:
                 child = int(line)
                 tree[parent].append(child)
             pids += tree[parent]
-        slurm_process['child_processes'] = tree[pid]
+        slurm_process['subprocesses'] = tree.keys()
         slurm_stats.append(slurm_process)
+
+    # docker processes
+
+    try:
+        result = check_output(
+                [
+                    'ps h -o pid,command -p `pgrep -f \'^docker-containerd-shim\'`'
+                ],
+                shell=True
+        )
+    except:
+        result = ''
+
+    docker_process_stats = []
+    for line in result.split('\n'):
+        if line == '':
+            continue
+        tokens = line.split()
+        pid = int(tokens[0])
+        container_id = tokens[2][:12]
+        docker_process = {
+                'pid': pid,
+                'container_id': container_id,
+        }
+        # get the process tree
+        pids = [pid]
+        tree = {}
+        while len(pids) != 0:
+            parent = pids.pop(0)
+            tree[parent] = []
+            result = check_output(
+                    [
+                        'pgrep -P ' + str(parent) + ' || true' # don't fail
+                    ],
+                    shell=True
+            )
+            for line in result.split('\n'):
+                if line == '':
+                    continue
+                child = int(line)
+                tree[parent].append(child)
+            pids += tree[parent]
+        docker_process['subprocesses'] = tree.keys()
+        docker_process_stats.append(docker_process)
 
     # GPU usage information
 
@@ -148,6 +192,7 @@ if args.raw_node_stats:
             'gpu_stats': gpu_stats,
             'gpu_process_stats': gpu_process_stats,
             'docker_stats': docker_stats,
+            'docker_process_stats': docker_process_stats,
             'slurm_stats': slurm_stats
     }
     print json.dumps(stats)
@@ -183,6 +228,15 @@ class Tasks:
 
         self.__tasks = {}
         for task in task_report:
+            try:
+                comment = task['comment']
+                if comment.startswith('('):
+                    docker_image_name = comment.split()[0][1:-1]
+                    image, name = docker_image_name.split('|')
+                task['docker_image'] = image
+                task['docker_container_name'] = task['user'] + '_' + name
+            except:
+                pass
             self.__tasks[task['job_id']] = task
 
     def get_job_ids(self):
@@ -279,6 +333,10 @@ class SlurmProcesses:
         for process in node_report['slurm_stats']:
             processes[process['job_id']] = process
 
+    def get_job_ids(self, node):
+
+        return self.__processes[node].keys()
+
     def get_process(self, job_id):
 
         for node,processes in self.__processes.items():
@@ -288,6 +346,31 @@ class SlurmProcesses:
 
         return None
 
+class DockerProcesses:
+
+    def __init__(self):
+        self.__processes = {}
+
+    def update(self, node, node_report):
+
+        self.__processes[node] = {}
+        processes = self.__processes[node]
+        for process in node_report['docker_process_stats']:
+            processes[process['container_id']] = process
+
+    def get_process(self, container_id):
+
+        for node,processes in self.__processes.items():
+            for k in processes.keys():
+                if k.startswith(container_id) or container_id.startswith(k):
+                    return processes[k]
+
+        return None
+
+    def get_processes(self):
+
+        return self.__processes
+
 class Spy:
 
     def __init__(self, screen):
@@ -296,6 +379,7 @@ class Spy:
         self.docker_containers = DockerContainers()
         self.gpu_usages = GpuUsages()
         self.slurm_processes = SlurmProcesses()
+        self.docker_processes = DockerProcesses()
 
         self.screen = screen
         self.color = curses.color_pair(0)
@@ -309,12 +393,17 @@ class Spy:
         self.next_color_group = 0
         self.next_color = [ 0 for g in self.color_groups ]
         self.user_color_group = {}
-        self.job_id_color = {}
+        self.job_id_color = {None: 0}
 
         self.connections = {}
         self.status_queue = multiprocessing.Queue(100)
         self.status = "Started"
         self.node_report_queues = { node: multiprocessing.Queue(10) for node in nodes }
+
+        # map from (node,pid) to slurm job_id
+        self.node_pid_job_id = { node: {} for node in nodes }
+        # map from docker container name to slurm job_id
+        self.container_name_job_id = {}
 
         self.stop = multiprocessing.Event()
         self.update_node_report_workers = { node: multiprocessing.Process(target=self.__get_node_reports, args=(node,)) for node in nodes }
@@ -445,7 +534,7 @@ class Spy:
     def __draw_nodes_gpu_usage(self, y, x):
 
         lines = 0
-        column_widths = [3, 8, 6, 6]
+        column_widths = [3, 5, 8, 6, 6]
         width = sum(column_widths) + len(column_widths) - 1
         step = max(0, width + (self.width - 2 - len(nodes)*width)/(len(nodes) - 1))
 
@@ -459,7 +548,7 @@ class Spy:
     def __draw_nodes_docker_containers(self, y, x):
 
         lines = 0
-        column_widths = [14, 10, 16]
+        column_widths = [14, 5, 10, 16]
         width = sum(column_widths) + len(column_widths) - 1
         step = max(0, width + (self.width - 2 - len(nodes)*width)/(len(nodes) - 1))
 
@@ -489,12 +578,19 @@ class Spy:
             return 0
 
         table = []
-        table.append(["GPU", "PID", "MEM %", "UTIL %"])
+        table.append(["GPU", "JOBID", "PID", "MEM %", "UTIL %"])
         for pid, usage in usages.items():
-            table.append([usage['gpu'], pid, usage['mem_percent'], usage['gpu_percent']])
+            table.append([usage['gpu'], self.__get_job_id(node, pid), pid, usage['mem_percent'], usage['gpu_percent']])
 
-        r,c = self.__draw_table(y+2, x, table, column_widths)
+        r,c = self.__draw_table(y+2, x, table, column_widths, row_colors=lambda i,row: self.job_id_color[row[1]])
         return r+2
+
+    def __get_job_id(self, node, pid):
+
+        if node in self.node_pid_job_id:
+            if pid in self.node_pid_job_id[node]:
+                return self.node_pid_job_id[node][pid]
+        return None
 
     def __draw_node_docker_containers(self, node, column_widths, y, x):
 
@@ -509,11 +605,11 @@ class Spy:
             return 0
 
         table = []
-        table.append(["NAME", "IMAGE", "STATUS"])
+        table.append(["NAME", "JOBID", "IMAGE", "STATUS"])
         for name, container in containers.items():
-            table.append([name, container['image'], container['status']])
+            table.append([name, container['job_id'], container['image'], container['status']])
 
-        r,c = self.__draw_table(y+2, x, table, column_widths)
+        r,c = self.__draw_table(y+2, x, table, column_widths, row_colors=lambda i,row: self.job_id_color[row[1]])
         return r+2
 
     def __draw_table(self, y, x, data, column_widths, row_colors=None):
@@ -569,6 +665,12 @@ class Spy:
         task_report = self.__get_task_report()
         self.tasks.update(task_report)
 
+        self.container_name_job_id = {}
+        for job_id in self.tasks.get_job_ids():
+            task = self.tasks.get_task(job_id)
+            if 'docker_container_name' in task:
+                self.container_name_job_id[task['docker_container_name']] = job_id
+
     def __get_task_report(self):
 
         result = check_output(
@@ -616,10 +718,39 @@ class Spy:
             if report is None:
                 continue
 
+            self.node_pid_job_id[node] = {}
+            pid_job_id = self.node_pid_job_id[node]
+
             if 'node_stats' in report:
                 self.docker_containers.update(node, report['node_stats'])
                 self.gpu_usages.update(node, report['node_stats'])
                 self.slurm_processes.update(node, report['node_stats'])
+                self.docker_processes.update(node, report['node_stats'])
+
+                for job_id in self.slurm_processes.get_job_ids(node):
+
+                    subprocesses = self.slurm_processes.get_process(job_id)['subprocesses']
+                    for pid in subprocesses:
+                        pid_job_id[pid] = job_id
+
+                for container_name,container in self.docker_containers.get_containers(node).items():
+
+                    if container_name in self.container_name_job_id:
+                        job_id = self.container_name_job_id[container_name]
+                    else:
+                        job_id = None
+
+                    container['job_id'] = job_id
+                    container_id = container['container_id']
+                    process = self.docker_processes.get_process(container_id)
+
+                    if process is not None:
+                        subprocesses = process['subprocesses']
+                        for pid in subprocesses:
+                            pid_job_id[pid] = job_id
+                    else:
+                        # no process found for docker container!
+                        container['status'] = 'ZOMBIE ' + container['status']
 
     def __get_node_reports(self, node):
 
@@ -639,7 +770,6 @@ class Spy:
                 logger.error("parent died, shutting down")
                 break
 
-            self.update_status_line("calling " + spy_command + " on " + node)
             stdin, stdout, stderr = connection.exec_command(spy_command + ' --raw-node-stats')
             result = ''.join([l for l in stdout ])
 
