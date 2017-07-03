@@ -400,6 +400,10 @@ class Spy:
         self.next_color = [ 0 for g in self.color_groups ]
         self.user_color_group = {}
         self.job_id_color = {None: 8}
+        self.default_job_id_color = {None: 8}
+        self.highlight_row = None
+        self.highlight_job_id = None
+        self.highlight_color = 267
 
         self.connections = {}
         self.status_queue = multiprocessing.Queue(100)
@@ -426,9 +430,9 @@ class Spy:
     def main_loop(self):
 
         while not self.stop.is_set():
-            self.__redraw()
             if not self.__read_input():
                 time.sleep(0.1)
+            self.__redraw()
         self.__redraw()
 
     def teardown(self):
@@ -461,9 +465,23 @@ class Spy:
             return False
 
         if char == curses.KEY_UP or char == ord('k'):
-            self.status = "Up key pressed"
+            if self.highlight_row is None:
+                self.highlight_row = -1
+            else:
+                self.highlight_row -= 1
         if char == curses.KEY_DOWN or char == ord('j'):
-            self.status = "Down key pressed"
+            if self.highlight_row is None:
+                self.highlight_row = 0
+            else:
+                self.highlight_row += 1
+        if char == 27:
+            char = self.screen.getch()
+            if char == curses.ERR:
+                # ESC key
+                self.highlight_row = None
+            else:
+                # ALT + key
+                pass
         if char == ord('q'):
             self.stop.set()
             self.status = "Quitting..."
@@ -495,6 +513,12 @@ class Spy:
             task = self.tasks.get_task(job_id)
             table.append([task[key] for key in ['job_id', 'user', 'comment', 'gpus', 'cpus', 'time', 'state', 'name', 'nodes']])
 
+        if self.highlight_row is not None:
+            i = self.highlight_row%len(job_ids)
+            self.highlight_job_id = job_ids[i]
+        else:
+            self.highlight_job_id = None
+
         r,c = self.__draw_table(y+k, x, table, column_widths, row_colors=lambda i,row: self.job_id_color[row[0]])
         return r+k
 
@@ -503,7 +527,7 @@ class Spy:
 
         for job_id in self.tasks.get_job_ids():
 
-            if job_id not in self.job_id_color:
+            if job_id not in self.default_job_id_color:
 
                 task = self.tasks.get_task(job_id)
                 user = task['user']
@@ -517,7 +541,14 @@ class Spy:
                 color = self.color_groups[color_group_number][self.next_color[color_group_number]]
                 self.next_color[color_group_number] = (self.next_color[color_group_number]+1)%len(self.color_groups[color_group_number])
 
-                self.job_id_color[job_id] = color
+                self.default_job_id_color[job_id] = color
+
+        if self.highlight_job_id is None:
+            self.job_id_color = self.default_job_id_color
+        else:
+            self.job_id_color = {}
+            self.job_id_color.update(self.default_job_id_color)
+            self.job_id_color[self.highlight_job_id] = self.highlight_color
 
     def __draw_nodes(self, y, x):
 
@@ -796,6 +827,8 @@ def run_curses(screen):
     curses.start_color()
     for i in range(1, 256):
         curses.init_pair(i, i, 0)
+    for i in range(1, 256):
+        curses.init_pair(i+256, 0, i)
     curses.curs_set(0)
     curses.noecho()
     screen.nodelay(1)
