@@ -215,6 +215,7 @@ import getpass
 import multiprocessing
 import os
 import paramiko
+import random
 import time
 import traceback
 
@@ -387,15 +388,18 @@ class Spy:
         self.color = curses.color_pair(0)
         self.color_groups = [
                 [40+i for i in range(6)],
-                [124+i for i in range(6)],
-                [172+i for i in range(6)],
-                [190+i for i in range(6)],
                 [214+i for i in range(6)],
+                [172+i for i in range(6)],
+                [124+i for i in range(6)],
+                [190+i for i in range(6)],
         ]
+        random.seed(42)
+        for g in self.color_groups:
+            random.shuffle(g)
         self.next_color_group = 0
         self.next_color = [ 0 for g in self.color_groups ]
         self.user_color_group = {}
-        self.job_id_color = {None: 0}
+        self.job_id_color = {None: 8}
 
         self.connections = {}
         self.status_queue = multiprocessing.Queue(100)
