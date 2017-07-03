@@ -178,6 +178,8 @@ if args.raw_node_stats:
 
     docker_stats = []
     for line in lines[1:]:
+        if line.strip() == '':
+            continue
         docker_stats.append({
             'container_id': line[idx_id:idx_image].strip(),
             'image': line[idx_image:idx_command].strip(),
