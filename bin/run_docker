@@ -9,9 +9,9 @@ usage() {
   echo;
   echo "    -d  Docker image to use to execute <command>. The docker container";
   echo "        will have";
-  echo "            /groups/saalfeld/home";
-  echo "        and";
-  echo "            /groups/turaga/home";
+  echo "            /groups";
+  echo "            /nrs";
+  echo "            /scratch";
   echo "        available.";
 }
 
@@ -84,6 +84,7 @@ nvidia-docker \
   -u `id -u $USER` \
   -v /groups:/groups \
   -v /nrs:/nrs \
+  -v /scratch:/scratch \
   -w ${WORK_DIR} \
   ${DOCKER_IMAGE} \
   ${COMMAND} &
