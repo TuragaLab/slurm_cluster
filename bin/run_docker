@@ -74,6 +74,8 @@ teardown() {
 
 trap teardown SIGINT SIGTERM
 
+echo "Running docker as user:group `id -u $USER`:`id -g $USER`"
+
 # run nvidia-docker in background
 export NV_GPU=$CUDA_VISIBLE_DEVICES
 nvidia-docker \
@@ -81,7 +83,7 @@ nvidia-docker \
   --rm \
   --cgroup-parent=$(cat /proc/self/cpuset) \
   --name ${CONTAINER_NAME} \
-  -u `id -u $USER` \
+  -u `id -u $USER`:`id -g $USER` \
   -v /groups:/groups \
   -v /nrs:/nrs \
   -v /scratch:/scratch \
