@@ -818,7 +818,6 @@ class Spy:
                 self.node_report_queues[node].put({'node_stats': result})
             except:
                 self.node_report_queues[node].put({'error': "Couldn't deserialize " + result})
-                raise
 
         connection.close()
 
