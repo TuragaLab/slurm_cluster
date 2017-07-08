@@ -39,6 +39,8 @@ if args.raw_node_stats:
         tokens = line.split()
         pid = int(tokens[0])
         job_step = tokens[2][1:-1].split('.')
+        if len(job_step) != 2:
+            continue
         job_id = int(job_step[0])
         step = int(job_step[1])
         slurm_process = {
