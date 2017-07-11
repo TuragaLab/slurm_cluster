@@ -451,7 +451,9 @@ class Spy:
         self.screen.erase()
         self.height, self.width = self.screen.getmaxyx()
 
-        y = 1
+        self.__draw_help_line(0)
+
+        y = 2
         y += self.__draw_tasks(y, 1)
         y += 1
         y += self.__draw_nodes(y, 1)
@@ -496,6 +498,11 @@ class Spy:
             raise RuntimeError("Blarg...")
 
         return True
+
+    def __draw_help_line(self, y):
+
+        self.color = curses.color_pair(256+8)
+        self.__draw_str(y, 0, "Keyboard controls: [j,k,UP,DOWN] select job, [ESC] unselect job, [C] cancel job, [q] quit".ljust(self.width))
 
     def __draw_tasks(self, y, x):
 
