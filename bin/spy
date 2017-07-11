@@ -606,7 +606,7 @@ class Spy:
     def __draw_status_line(self):
 
         self.__update_status()
-        self.color = curses.color_pair(8)
+        self.color = curses.color_pair(1)
         self.__draw_str(self.height - 1, 0, self.status)
 
     def __draw_node_gpu_usage(self, node, column_widths, y, x):
