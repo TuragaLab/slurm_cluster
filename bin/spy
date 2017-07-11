@@ -5,7 +5,7 @@
 # --raw-node-state version
 #############################################################################
 
-from subprocess import check_output
+from subprocess import check_output, STDOUT
 import argparse
 import json
 import sys
@@ -427,7 +427,7 @@ class Spy:
         '''Update the status line at the bottom. Can be called from any process, 
         statuses will be shown in order received.'''
 
-        self.status_queue.put(status)
+        self.status_queue.put(status.strip())
 
     def main_loop(self):
 
@@ -476,6 +476,11 @@ class Spy:
                 self.highlight_row = 0
             else:
                 self.highlight_row += 1
+        if char == ord('C'):
+            if self.highlight_job_id is None:
+                self.update_status_line("Please select a task first")
+            else:
+                self.__cancel_job(self.highlight_job_id)
         if char == 27:
             char = self.screen.getch()
             if char == curses.ERR:
@@ -488,7 +493,7 @@ class Spy:
             self.stop.set()
             self.status = "Quitting..."
         if char == ord('e'):
-            raise RuntimeException("Blarg...")
+            raise RuntimeError("Blarg...")
 
         return True
 
@@ -822,6 +827,26 @@ class Spy:
                 self.node_report_queues[node].put({'error': "Couldn't deserialize " + result})
 
         connection.close()
+
+    def __cancel_job(self, job_id):
+
+        self.update_status_line("Cancelling slurm job %d..."%job_id)
+        try:
+            result = check_output(
+                    [
+                        'scancel',
+                        str(job_id)
+                    ],
+                    stderr=STDOUT
+            )
+        except:
+            self.update_status_line("scancel failed for slurm job %d"%job_id)
+            raise
+
+        if 'error' in result:
+            self.update_status_line("Could not cancel slurm job %d: %s"%(job_id, result))
+        else:
+            self.update_status_line("Slurm job %d canceled"%job_id)
 
 def run_curses(screen):
 
