@@ -403,11 +403,11 @@ class Spy:
         self.screen = screen
         self.color = curses.color_pair(0)
         self.color_groups = [
-                [40+i for i in range(6)],
-                [214+i for i in range(6)],
-                [172+i for i in range(6)],
-                [124+i for i in range(6)],
-                [190+i for i in range(6)],
+                [40, 41],
+                [214, 215],
+                [172, 173],
+                [124, 125],
+                [190, 191]
         ]
         random.seed(42)
         for g in self.color_groups:
