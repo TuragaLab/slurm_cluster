@@ -231,7 +231,12 @@ def silence():
     save_stderr = sys.stderr
     sys.stdout = Silence()
     sys.stderr = Silence()
-    yield
+    try:
+        yield
+    except Exception as e:
+        sys.stdout = save_stdout
+        sys.stderr = save_stderr
+        raise e
     sys.stdout = save_stdout
     sys.stderr = save_stderr
 
