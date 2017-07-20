@@ -461,9 +461,11 @@ class Spy:
         self.stop.set()
         self.status = "Closing connections..."
         for node, worker in self.update_node_report_workers.items():
-            worker.terminate()
+            if worker.is_alive():
+                worker.terminate()
         for node, worker in self.update_node_report_workers.items():
-            worker.join()
+            if worker.is_alive():
+                worker.join()
 
     def __redraw(self):
 
