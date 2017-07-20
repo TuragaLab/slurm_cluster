@@ -23,8 +23,9 @@ do \
     (sudo mkdir /dev/cpuset || true) && \
     (sudo mount -t cpuset cpuset /dev/cpuset || true) && \
     echo 'cpusets mounted at /dev/cpuset' && \
-    sudo /etc/init.d/slurm-llnl start && \
-    sudo /etc/init.d/munge start)"
+    sudo systemctl start munge && \
+    sudo systemctl start slurmctld && \
+    sudo systemctl start slurmd)"
 done
 
 echo "Reconfiguring slurm..."
