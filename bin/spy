@@ -789,7 +789,9 @@ class Spy:
                 if 'status' in report:
                     self.update_status_line(node + ": " + report['status'])
                 if 'error' in report:
-                    self.update_status_line("ERROR: " + node + report['error'])
+                    self.update_status_line("ERROR(" + node + "): " + report['error'])
+                    # if 'exception' in report:
+                        # raise report['exception']
             if report is None:
                 continue
 
@@ -829,34 +831,39 @@ class Spy:
 
     def __get_node_reports(self, node):
 
-        with silence():
+        try:
 
-            parent_pid = os.getppid()
+            with silence():
 
-            self.node_report_queues[node].put({'status': "connecting..."})
-            connection = paramiko.SSHClient()
-            connection.load_system_host_keys()
-            connection.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            connection.connect(node)
-            self.connections[node] = connection
-            self.node_report_queues[node].put({'status': "connected"})
+                parent_pid = os.getppid()
 
-            while not self.stop.is_set():
+                self.node_report_queues[node].put({'status': "connecting..."})
+                connection = paramiko.SSHClient()
+                connection.load_system_host_keys()
+                connection.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                connection.connect(node)
+                self.connections[node] = connection
+                self.node_report_queues[node].put({'status': "connected"})
 
-                if os.getppid() != parent_pid:
-                    logger.error("parent died, shutting down")
-                    break
+                while not self.stop.is_set():
 
-                stdin, stdout, stderr = connection.exec_command(spy_command + ' --raw-node-stats')
-                result = ''.join([l for l in stdout ])
+                    if os.getppid() != parent_pid:
+                        break
 
-                try:
-                    result = json.loads(result)
-                    self.node_report_queues[node].put({'node_stats': result})
-                except:
-                    self.node_report_queues[node].put({'error': "Couldn't deserialize " + result})
+                    stdin, stdout, stderr = connection.exec_command(spy_command + ' --raw-node-stats')
+                    result = ''.join([l for l in stdout ])
 
-            connection.close()
+                    try:
+                        result = json.loads(result)
+                        self.node_report_queues[node].put({'node_stats': result})
+                    except:
+                        self.node_report_queues[node].put({'error': "Couldn't deserialize " + result})
+
+                connection.close()
+
+        except Exception as e:
+
+            self.node_report_queues[node].put({'error': "Could not connect to " + node + " (make sure you can ssh non-interactively)", 'exception': e})
 
     def __cancel_job(self, job_id):
 
