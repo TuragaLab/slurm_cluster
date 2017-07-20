@@ -532,7 +532,7 @@ class Spy:
 
         if len(job_ids) == 0:
             self.__draw_str(y+k, x, "[no running tasks]")
-            return
+            return 1
 
         column_widths = [5, 8, -1, 4, 4, 11, 8, 8, 8]
         table = []
