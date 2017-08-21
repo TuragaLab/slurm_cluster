@@ -593,17 +593,20 @@ class Spy:
         k = 0
         self.__draw_str(y+k, x, "GPU USAGE " + '-'*self.width)
         k += 2
-        k += self.__draw_nodes_gpu_usage(y+k, x)
-        k += 1
+        for n in range(0, len(nodes), 4):
+            k += self.__draw_nodes_gpu_usage(y+k, x, nodes[n:n+4])
+            k += 1
         self.color = curses.color_pair(0)
         k += 1
         self.__draw_str(y+k, x, "DOCKER CONTAINERS " + '-'*self.width)
         k += 2
-        k += self.__draw_nodes_docker_containers(y+k, x)
+        for n in range(0, len(nodes), 4):
+            k += self.__draw_nodes_docker_containers(y+k, x, nodes[n:n+4])
+            k += 1
 
         return k
 
-    def __draw_nodes_gpu_usage(self, y, x):
+    def __draw_nodes_gpu_usage(self, y, x, nodes):
 
         lines = 0
         column_widths = [3, 5, 8, 6, 6]
@@ -617,7 +620,7 @@ class Spy:
 
         return lines
 
-    def __draw_nodes_docker_containers(self, y, x):
+    def __draw_nodes_docker_containers(self, y, x, nodes):
 
         lines = 0
         column_widths = [14, 5, 10, 16]
