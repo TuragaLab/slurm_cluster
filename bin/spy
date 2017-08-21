@@ -240,7 +240,7 @@ def silence():
     sys.stdout = save_stdout
     sys.stderr = save_stderr
 
-nodes = ['slowpoke1', 'slowpoke2', 'slowpoke3', 'slowpoke4']
+nodes = ['slowpoke1', 'slowpoke2', 'slowpoke3', 'slowpoke4', 'slowpoke5', 'slowpoke6', 'slowpoke7', 'slowpoke8']
 spy_command = os.path.abspath(__file__)
 
 class Tasks:

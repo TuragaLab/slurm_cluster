@@ -1,6 +1,6 @@
 #!/bin/bash
 
-for node in slowpoke{1,2,3,4} turagas-ws{1,2,3,4,5}
+for node in slowpoke{1,2,3,4,5,6,7,8} turagas-ws{1,2,3,4,5}
 do \
   echo
   echo "============= Updating configuration on ${node}"
