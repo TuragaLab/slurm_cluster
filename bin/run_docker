@@ -83,6 +83,7 @@ nvidia-docker \
   --rm \
   --cgroup-parent=$(cat /proc/self/cpuset) \
   --name ${CONTAINER_NAME} \
+  -e HOME="$HOME" \
   -u `id -u $USER`:`id -g $USER` \
   -v /groups:/groups:shared \
   -v /nrs:/nrs:shared \
