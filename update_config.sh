@@ -23,6 +23,8 @@ do \
     (sudo mkdir /dev/cpuset || true) && \
     (sudo mount -t cpuset cpuset /dev/cpuset || true) && \
     echo 'cpusets mounted at /dev/cpuset' && \
+    sudo systemctl start docker.socket && \
+    sudo systemctl start docker && \
     sudo systemctl start munge && \
     sudo systemctl start slurmctld && \
     sudo systemctl start slurmd)"
