@@ -788,7 +788,10 @@ class Spy:
 
             report = None
             while not self.node_report_queues[node].empty():
-                report = self.node_report_queues[node].get()
+                try:
+                    report = self.node_report_queues[node].get()
+                except:
+                    report = { 'error': "Couldn't read report from " + node }
                 if 'status' in report:
                     self.update_status_line(node + ": " + report['status'])
                 if 'error' in report:
