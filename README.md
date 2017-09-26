@@ -119,3 +119,21 @@ Edit `config/slurm.conf` and add a line for the new node.
 Finally, call `update_config.sh` from this repository, which will copy the
 configuration files for `slurm`, start the daemons (if not running) and trigger
 a reconfiguration of the cluster. This will keep currently running jobs.
+
+### After a restart of a node
+
+Make sure docker can be run by everyone in the `turaga` group:
+```shell
+sudo systemctl start docker.socket
+```
+
+Then start the `slurm` daemon:
+```shell
+sudo systemctl start slurmd
+```
+
+Finally, bring up the node again:
+```shell
+sudo scontrol update nodename=NODE state=idle
+```
+where you replace `NODE` with the actual node name.
