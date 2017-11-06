@@ -541,12 +541,12 @@ class Spy:
             self.__draw_str(y+k, x, "[no running tasks]")
             return 1
 
-        column_widths = [5, 8, -1, 4, 4, 11, 8, 8, 8]
+        column_widths = [5, 8, -1, 4, 4, 6, 11, 8, 8, 8]
         table = []
-        table.append(["JOBID", "USER", "COMMAND", "GPUS", "CPUS", "TIME", "STATE", "NAME", "NODE"])
+        table.append(["JOBID", "USER", "COMMAND", "GPUS", "CPUS", "MEM", "TIME", "STATE", "NAME", "NODE"])
         for job_id in job_ids:
             task = self.tasks.get_task(job_id)
-            table.append([task[key] for key in ['job_id', 'user', 'comment', 'gpus', 'cpus', 'time', 'state', 'name', 'nodes']])
+            table.append([task[key] for key in ['job_id', 'user', 'comment', 'gpus', 'cpus', 'mem', 'time', 'state', 'name', 'nodes']])
 
         if self.highlight_row is not None:
             i = self.highlight_row%len(job_ids)
@@ -756,9 +756,9 @@ class Spy:
                     'squeue',
                     '-h',
                     '-o',
-                    # JOBID USER COMMENT GRES CPUS TIME STATE NAME 
+                    # JOBID USER COMMENT GRES CPUS MEM TIME STATE NAME 
                     # NODELIST(REASON)
-                    '%Aß%uß%kß%bß%Cß%Mß%Tß%jß%R'
+                    '%Aß%uß%kß%bß%Cß%mß%Mß%Tß%jß%R'
                 ]
         )
 
@@ -773,10 +773,11 @@ class Spy:
                     'comment': tokens[2],
                     'gpus': int(tokens[3][4:]),
                     'cpus': int(tokens[4]),
-                    'time': tokens[5],
-                    'state': tokens[6],
-                    'name': tokens[7],
-                    'nodes': tokens[8],
+                    'mem': tokens[5],
+                    'time': tokens[6],
+                    'state': tokens[7],
+                    'name': tokens[8],
+                    'nodes': tokens[9],
             })
 
         return task_report
