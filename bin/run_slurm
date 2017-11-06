@@ -13,10 +13,8 @@ usage() {
   echo "        directory.";
   echo;
   echo "    -d  Optional docker image to use to execute <command>. The docker";
-  echo "        container will have";
-  echo "            /groups/saalfeld/home";
-  echo "        and";
-  echo "            /groups/turaga/home available.";
+  echo "        container will have some common local directories mounted. See ";
+  echo "        'run_docker --help' for details.";
   echo;
   echo "    -b  If given run command in background. This uses sbatch to submit";
   echo "        a task, see the status with squeue. If not given, this call";
