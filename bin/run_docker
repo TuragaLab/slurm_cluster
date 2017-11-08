@@ -13,18 +13,21 @@ usage() {
   echo "            /nrs";
   echo "            /scratch";
   echo "        available.";
+  echo;
+  echo "    -p  Ports to expose, see 'man docker run'.";
 }
 
 # defaults
 
 WORK_DIR=$(pwd)
 DOCKER_IMAGE=''
+PORTS=''
 THIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # parse command line args
 
 num_args=0
-while getopts ":w:d:" opt; do
+while getopts ":w:d:p:" opt; do
   case "${opt}" in
     w)
         WORK_DIR=${OPTARG}
@@ -32,6 +35,10 @@ while getopts ":w:d:" opt; do
         ;;
     d)
         DOCKER_IMAGE=${OPTARG}
+        ((num_args+=2))
+        ;;
+    p)
+        PORTS="-p ${OPTARG}"
         ((num_args+=2))
         ;;
     *)
@@ -89,6 +96,7 @@ nvidia-docker \
   -v /nrs:/nrs:shared \
   -v /scratch:/scratch:shared \
   -w ${WORK_DIR} \
+  ${PORTS} \
   ${DOCKER_IMAGE} \
   ${COMMAND} &
 
