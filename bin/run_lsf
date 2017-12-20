@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+. /misc/lsf/conf/profile.lsf
+usage() {
+  echo "Usage: $0 [-c <number of cpus>] [-g <number of gpus>] [-m <memory MB>] [-w <working directory>] [-d <docker image>] [-b] <command> [<args>...]";
+  echo;
+  echo "    -c  Number of CPUs to request, default 5.";
+  echo;
+  echo "    -g  Number of GPUs to request, default 1.";
+  echo;
+  echo "    -m  Amount of memory to request, default 25600.";
+  echo;
+  echo "    -w  The working directory for <command>, defaults to current";
+  echo "        directory.";
+  echo;
+  echo "    -d  Optional docker image to use to execute <command>. The docker";
+  echo "        container will have some common local directories mounted. See ";
+  echo "        'run_docker --help' for details.";
+  echo;
+  echo "    -b  If given run command in background. This uses sbatch to submit";
+  echo "        a task, see the status with squeue. If not given, this call";
+  echo "        will block and return the exit code of <command>.";
+}
+
+# defaults
+
+CPUS=5
+GPUS=1
+MEMORY_MB=25600
+WORK_DIR=$(pwd)
+DOCKER_IMAGE=''
+BATCH="false"
+THIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# parse command line args
+
+while getopts ":c:g:m:w:d:b" opt; do
+  case "${opt}" in
+    c)
+        CPUS=${OPTARG}
+        ;;
+    g)
+        GPUS=${OPTARG}
+        ;;
+    m)
+        MEMORY_MB=${OPTARG}
+        ;;
+    w)
+        WORK_DIR=${OPTARG}
+        ;;
+    d)
+        DOCKER_IMAGE=${OPTARG}
+        ;;
+    b)
+        BATCH="true"
+        ;;
+    *)
+        usage
+        exit
+        ;;
+  esac
+done
+
+shift $((OPTIND-1))
+COMMAND="$@"
+
+# at least a command needs to be given
+if [ "$COMMAND" == "" ];
+then \
+  echo No command provided!
+  echo
+  usage
+  exit
+fi
+
+if [ "$DOCKER_IMAGE" == "" ];
+then \
+  docker_info=""
+  COMMENT=""
+else \
+  docker_info=", using docker image ${DOCKER_IMAGE}"
+  CONTAINER_ID="${RANDOM}"
+  export CONTAINER_NAME="${USER}_${CONTAINER_ID}"
+  COMMENT="(${DOCKER_IMAGE}|${CONTAINER_ID})"
+  COMMAND="${THIS_DIR}/run_docker -d ${DOCKER_IMAGE} -w ${WORK_DIR} ${COMMAND}"
+fi
+
+echo "Scheduling job on ${CPUS} CPUs, ${GPUS} GPUs, ${MEMORY_MB} MB in ${WORK_DIR}${docker_info}"
+
+if [ "$BATCH" == "false" ];
+then \
+  SUBMIT_CMD="bsub -Is "
+else \
+  SUBMIT_CMD=bsub
+fi
+${SUBMIT_CMD} \
+  -J "${COMMENT}" \
+  -n ${CPUS} \
+  -gpu "num=${GPUS}:mps=no" \
+  -R"rusage[mem=${MEMORY_MB}]" \
+  -q slowpoke \
+  ${COMMAND}
+TASK_RETURN_VALUE=$?
+
+exit $TASK_RETURN_VALUE
+
+## holding   
+##  -R"affinity[core(1)]" \

@@ -1,0 +1,960 @@
+#!/usr/bin/python
+# -*- coding: utf-8 -*-
+
+#############################################################################
+# --raw-node-state version
+#############################################################################
+
+from subprocess import check_output, STDOUT
+import argparse
+import json
+import sys
+
+parser = argparse.ArgumentParser(description='Spy on LSF usage.')
+parser.add_argument(
+        '--raw-node-stats', action='store_const',
+        const='raw_node_stats', default=False,
+        help='Report this node stats as JSON string. Used internally.')
+
+args = parser.parse_args()
+
+if args.raw_node_stats:
+
+    # slurmstepd processes
+
+    try:
+        result = check_output(
+                [
+                    'ps h -o pid,command -p `pgrep res`'
+                ],
+                shell=True
+        )
+    except:
+        result = ''
+
+    slurm_stats = []
+    for line in result.split('\n'):
+        if line == '' or line.endswith('res'):
+            continue
+        tokens = line.split()
+        pid = int(tokens[0])
+        timestamp_job_step = tokens[-1].split('/')[-1].split('.')
+        if len(timestamp_job_step) < 2:
+            continue
+        job_id = int(timestamp_job_step[1])
+        if len(timestamp_job_step) == 3:
+            step = int(timestamp_job_step[2])
+        else:
+            step = 0
+        slurm_process = {
+                'pid': pid,
+                'job_id': job_id,
+                'step': step
+        }
+        # get the process tree
+        pids = [pid]
+        tree = {}
+        while len(pids) != 0:
+            parent = pids.pop(0)
+            tree[parent] = []
+            result = check_output(
+                    [
+                        'pgrep -P ' + str(parent) + ' || true' # don't fail
+                    ],
+                    shell=True
+            )
+            for line in result.split('\n'):
+                if line == '':
+                    continue
+                child = int(line)
+                tree[parent].append(child)
+            pids += tree[parent]
+        slurm_process['subprocesses'] = tree.keys()
+        slurm_stats.append(slurm_process)
+
+    # docker processes
+
+    try:
+        result = check_output(
+                [
+                    'ps h -o pid,command -p `pgrep -f \'^docker-containerd-shim\'`'
+                ],
+                shell=True
+        )
+    except:
+        result = ''
+
+    docker_process_stats = []
+    for line in result.split('\n'):
+        if line == '':
+            continue
+        tokens = line.split()
+        pid = int(tokens[0])
+        container_id = tokens[2][:12]
+        docker_process = {
+                'pid': pid,
+                'container_id': container_id,
+        }
+        # get the process tree
+        pids = [pid]
+        tree = {}
+        while len(pids) != 0:
+            parent = pids.pop(0)
+            tree[parent] = []
+            result = check_output(
+                    [
+                        'pgrep -P ' + str(parent) + ' || true' # don't fail
+                    ],
+                    shell=True
+            )
+            for line in result.split('\n'):
+                if line == '':
+                    continue
+                child = int(line)
+                tree[parent].append(child)
+            pids += tree[parent]
+        docker_process['subprocesses'] = tree.keys()
+        docker_process_stats.append(docker_process)
+
+    # GPU usage information
+
+    result = check_output(
+            [
+                'nvidia-smi',
+                '--query-gpu=gpu_bus_id,utilization.memory,utilization.gpu',
+                '--format=noheader,csv'
+            ]
+    )
+
+    gpu_stats = {}
+    for line in result.split('\n'):
+        if line == '':
+            continue
+        tokens = line.split(',')
+        bus_id = tokens[0]
+        mem_percent = float(tokens[1][:-1])
+        gpu_percent = float(tokens[2][:-1])
+        gpu_stats[bus_id] = {
+            'bus_id':bus_id,
+            'mem_percent':mem_percent,
+            'gpu_percent':gpu_percent
+        }
+
+    # GPU process information
+
+    result = check_output(
+            [
+                'nvidia-smi',
+                '--query-compute-apps=gpu_bus_id,pid',
+                '--format=noheader,csv'
+            ]
+    )
+
+    gpu_process_stats = []
+    for line in result.split('\n'):
+        if line == '':
+            continue
+        tokens = line.split(',')
+        bus_id = tokens[0]
+        pid = int(tokens[1])
+        gpu_process_stats.append({
+            'bus_id':bus_id,
+            'pid':pid
+        })
+
+    # running docker images
+
+    result = check_output(
+            [
+                'docker',
+                'ps',
+                '--no-trunc=true'
+            ]
+    )
+
+    lines = result.split('\n')
+    idx_id = lines[0].find('CONTAINER')
+    idx_image = lines[0].find('IMAGE')
+    idx_command = lines[0].find('COMMAND')
+    idx_created = lines[0].find('CREATED')
+    idx_status = lines[0].find('STATUS')
+    idx_ports = lines[0].find('PORTS')
+    idx_names = lines[0].find('NAMES')
+
+    docker_stats = []
+    for line in lines[1:]:
+        if line.strip() == '':
+            continue
+        docker_stats.append({
+            'container_id': line[idx_id:idx_image].strip(),
+            'image': line[idx_image:idx_command].strip(),
+            'command': line[idx_command:idx_created].strip(),
+            'created': line[idx_created:idx_status].strip(),
+            'status': line[idx_status:idx_ports].strip(),
+            'ports': line[idx_ports:idx_names].strip(),
+            'name': line[idx_names:].strip(),
+        })
+
+    stats = {
+            'gpu_stats': gpu_stats,
+            'gpu_process_stats': gpu_process_stats,
+            'docker_stats': docker_stats,
+            'docker_process_stats': docker_process_stats,
+            'slurm_stats': slurm_stats
+    }
+    print json.dumps(stats)
+
+    sys.exit(0)
+
+#############################################################################
+# default spy version
+#############################################################################
+
+try:
+    import Queue
+except:
+    import queue as Queue
+import contextlib
+import copy
+import curses
+import getpass
+import multiprocessing
+import os
+import paramiko
+import random
+import re
+import time
+import traceback
+
+class Silence(object):
+    def write(self, x): pass
+
+@contextlib.contextmanager
+def silence():
+    save_stdout = sys.stdout
+    save_stderr = sys.stderr
+    sys.stdout = Silence()
+    sys.stderr = Silence()
+    try:
+        yield
+    except Exception as e:
+        sys.stdout = save_stdout
+        sys.stderr = save_stderr
+        raise e
+    sys.stdout = save_stdout
+    sys.stderr = save_stderr
+
+nodes = ['slowpoke1', 'slowpoke2', 'slowpoke3', 'slowpoke4', 'slowpoke5', 'slowpoke6', 'slowpoke7', 'slowpoke8']
+spy_command = os.path.abspath(__file__)
+
+class Tasks:
+
+    def __init__(self):
+        self.__tasks = {}
+
+    def update(self, task_report):
+
+        self.__tasks = {}
+        for task in task_report:
+            try:
+                name = task['name']
+                if name.startswith('('):
+                    docker_image_name = name.split()[0][1:-1]
+                    image, name = docker_image_name.split('|')
+                task['docker_image'] = image
+                task['docker_container_name'] = task['user'] + '_' + name
+            except:
+                pass
+            self.__tasks[task['job_id']] = task
+
+    def get_job_ids(self):
+        job_ids = self.__tasks.keys()
+        job_ids.sort()
+        return job_ids
+
+    def get_task(self, job_id):
+        if job_id in self.__tasks:
+            return self.__tasks[job_id]
+        return None
+
+class DockerContainers:
+
+    def __init__(self):
+        self.__containers = {}
+
+    def update(self, node, node_report):
+
+        self.__containers[node] = {}
+        containers = self.__containers[node]
+        for container in node_report['docker_stats']:
+            containers[container['name']] = container
+
+    def get_containers(self, node):
+
+        if node not in self.__containers:
+            return None
+
+        return self.__containers[node]
+
+    def get_container(self, container_name):
+
+        for node,containers in self.__containers.items():
+            if container_name not in containers:
+                continue
+            return containers[container_name]
+
+        return None
+
+class GpuUsages:
+
+    def __init__(self):
+        self.__usages = {}
+
+    def update(self, node, node_report):
+
+        self.__usages[node] = {}
+        usages = self.__usages[node]
+
+        # map bus ids to gpu nums (assuming gpus are numbered in increasing bus 
+        # id)
+        gpu_num = {}
+        gpu = 0
+        bus_ids = [b for b,_ in node_report['gpu_stats'].items()]
+        bus_ids.sort()
+        for bus_id in bus_ids:
+            gpu_num[bus_id] = gpu
+            gpu += 1
+
+        for process in node_report['gpu_process_stats']:
+            bus_id = process['bus_id']
+            usage = copy.copy(node_report['gpu_stats'][bus_id])
+            usage['pid'] = process['pid']
+            usage['gpu'] = gpu_num[bus_id]
+            usages[process['pid']] = usage
+
+    def get_usages(self, node):
+
+        if node not in self.__usages:
+            return None
+
+        return self.__usages[node]
+
+    def get_usage(self, node, pid):
+
+        if node not in self.__usages:
+            return None
+
+        if pid not in self.__usages[node]:
+            return None
+
+        return self.__usages[node][pid]
+
+class SlurmProcesses:
+
+    def __init__(self):
+        self.__processes = {}
+
+    def update(self, node, node_report):
+
+        self.__processes[node] = {}
+        processes = self.__processes[node]
+        for process in node_report['slurm_stats']:
+            processes[process['job_id']] = process
+
+    def get_job_ids(self, node):
+
+        return self.__processes[node].keys()
+
+    def get_process(self, job_id):
+
+        for node,processes in self.__processes.items():
+            if job_id not in processes:
+                continue
+            return processes[job_id]
+
+        return None
+
+class DockerProcesses:
+
+    def __init__(self):
+        self.__processes = {}
+
+    def update(self, node, node_report):
+
+        self.__processes[node] = {}
+        processes = self.__processes[node]
+        for process in node_report['docker_process_stats']:
+            processes[process['container_id']] = process
+
+    def get_process(self, container_id):
+
+        for node,processes in self.__processes.items():
+            for k in processes.keys():
+                if k.startswith(container_id) or container_id.startswith(k):
+                    return processes[k]
+
+        return None
+
+    def get_processes(self):
+
+        return self.__processes
+
+class Spy:
+
+    def __init__(self, screen):
+
+        self.tasks = Tasks()
+        self.docker_containers = DockerContainers()
+        self.gpu_usages = GpuUsages()
+        self.slurm_processes = SlurmProcesses()
+        self.docker_processes = DockerProcesses()
+
+        self.screen = screen
+        self.color = curses.color_pair(0)
+        self.color_groups = [
+                [40, 41],
+                [214, 215],
+                [172, 173],
+                [124, 125],
+                [190, 191]
+        ]
+        random.seed(42)
+        for g in self.color_groups:
+            random.shuffle(g)
+        self.next_color_group = 0
+        self.next_color = [ 0 for g in self.color_groups ]
+        self.user_color_group = {}
+        self.job_id_color = {None: 8}
+        self.default_job_id_color = {None: 8}
+        self.highlight_row = None
+        self.highlight_job_id = None
+        self.highlight_color = 267
+
+        self.connections = {}
+        self.status_queue = multiprocessing.Queue(100)
+        self.status = "Started"
+        self.node_report_queues = { node: multiprocessing.Queue(10) for node in nodes }
+
+        # map from (node,pid) to slurm job_id
+        self.node_pid_job_id = { node: {} for node in nodes }
+        # map from docker container name to slurm job_id
+        self.container_name_job_id = {}
+
+        self.stop = multiprocessing.Event()
+        self.update_node_report_workers = { node: multiprocessing.Process(target=self.__get_node_reports, args=(node,)) for node in nodes }
+        self.stop.clear()
+        for node, worker in self.update_node_report_workers.items():
+            worker.start()
+
+    def update_status_line(self, status):
+        '''Update the status line at the bottom. Can be called from any process, 
+        statuses will be shown in order received.'''
+
+        self.status_queue.put(status.strip())
+
+    def main_loop(self):
+
+        while not self.stop.is_set():
+            if not self.__read_input():
+                time.sleep(0.1)
+            self.__redraw()
+        self.__redraw()
+
+    def teardown(self):
+
+        self.stop.set()
+        self.status = "Closing connections..."
+        for node, worker in self.update_node_report_workers.items():
+            if worker.is_alive():
+                worker.terminate()
+        for node, worker in self.update_node_report_workers.items():
+            if worker.is_alive():
+                worker.join()
+
+    def __redraw(self):
+
+        self.screen.erase()
+        self.height, self.width = self.screen.getmaxyx()
+
+        self.__draw_help_line(0)
+
+        y = 2
+        y += self.__draw_tasks(y, 1)
+        y += 1
+        y += self.__draw_nodes(y, 1)
+
+        self.__draw_status_line()
+
+        self.screen.refresh()
+
+    def __read_input(self):
+
+        char = self.screen.getch()
+        if char == curses.ERR:
+            return False
+
+        if char == curses.KEY_UP or char == ord('k'):
+            if self.highlight_row is None:
+                self.highlight_row = -1
+            else:
+                self.highlight_row -= 1
+        if char == curses.KEY_DOWN or char == ord('j'):
+            if self.highlight_row is None:
+                self.highlight_row = 0
+            else:
+                self.highlight_row += 1
+        if char == ord('C'):
+            if self.highlight_job_id is None:
+                self.update_status_line("Please select a task first")
+            else:
+                self.__cancel_job(self.highlight_job_id)
+        if char == 27:
+            char = self.screen.getch()
+            if char == curses.ERR:
+                # ESC key
+                self.highlight_row = None
+            else:
+                # ALT + key
+                pass
+        if char == ord('q'):
+            self.stop.set()
+            self.status = "Quitting..."
+        if char == ord('e'):
+            raise RuntimeError("Blarg...")
+
+        return True
+
+    def __draw_help_line(self, y):
+
+        self.color = curses.color_pair(256+8)
+        self.__draw_str(y, 0, "Keyboard controls: [j,k,UP,DOWN] select job, [ESC] unselect job, [C] cancel job, [q] quit".ljust(self.width))
+
+    def __draw_tasks(self, y, x):
+
+        self.__integrate_task_report()
+        self.__update_color_map()
+
+        self.color = curses.color_pair(0)
+        k = 0
+        self.__draw_str(y+k, x, "SLURM STATUS " + '-'*self.width)
+        k += 2
+
+        job_ids = self.tasks.get_job_ids()
+
+        if len(job_ids) == 0:
+            self.__draw_str(y+k, x, "[no running tasks]")
+            return 1
+
+        column_widths = [5, 8, -1, 4, 4, 6, 11, 8, 8, 8]
+        table = []
+        table.append(["JOBID", "USER", "COMMAND", "GPUS", "CPUS", "MEM", "TIME", "STATE", "NAME", "NODE"])
+        for job_id in job_ids:
+            task = self.tasks.get_task(job_id)
+            table.append([task[key] for key in ['job_id', 'user', 'command', 'gpus', 'cpus', 'mem', 'time', 'state', 'name', 'nodes']])
+
+        if self.highlight_row is not None:
+            i = self.highlight_row%len(job_ids)
+            self.highlight_job_id = job_ids[i]
+        else:
+            self.highlight_job_id = None
+
+        r,c = self.__draw_table(y+k, x, table, column_widths, row_colors=lambda i,row: self.job_id_color[row[0]])
+        return r+k
+
+    def __update_color_map(self):
+        '''Assign each slurm task a color.'''
+
+        for job_id in self.tasks.get_job_ids():
+
+            if job_id not in self.default_job_id_color:
+
+                task = self.tasks.get_task(job_id)
+                user = task['user']
+
+                if user not in self.user_color_group:
+                    self.user_color_group[user] = self.next_color_group
+                    self.next_color_group = (self.next_color_group + 1)%len(self.color_groups)
+
+                color_group_number = self.user_color_group[user]
+
+                color = self.color_groups[color_group_number][self.next_color[color_group_number]]
+                self.next_color[color_group_number] = (self.next_color[color_group_number]+1)%len(self.color_groups[color_group_number])
+
+                self.default_job_id_color[job_id] = color
+
+        if self.highlight_job_id is None:
+            self.job_id_color = self.default_job_id_color
+        else:
+            self.job_id_color = {}
+            self.job_id_color.update(self.default_job_id_color)
+            self.job_id_color[self.highlight_job_id] = self.highlight_color
+
+    def __draw_nodes(self, y, x):
+
+        self.__integrate_node_reports()
+
+        self.color = curses.color_pair(0)
+        k = 0
+        self.__draw_str(y+k, x, "GPU USAGE " + '-'*self.width)
+        k += 2
+        for n in range(0, len(nodes), 4):
+            k += self.__draw_nodes_gpu_usage(y+k, x, nodes[n:n+4])
+            k += 1
+        self.color = curses.color_pair(0)
+        k += 1
+        self.__draw_str(y+k, x, "DOCKER CONTAINERS " + '-'*self.width)
+        k += 2
+        for n in range(0, len(nodes), 4):
+            k += self.__draw_nodes_docker_containers(y+k, x, nodes[n:n+4])
+            k += 1
+
+        return k
+
+    def __draw_nodes_gpu_usage(self, y, x, nodes):
+
+        lines = 0
+        column_widths = [3, 5, 8, 6, 6]
+        width = sum(column_widths) + len(column_widths) - 1
+        step = max(0, width + (self.width - 2 - len(nodes)*width)/(len(nodes) - 1))
+
+        i = 0
+        for node in nodes:
+            lines = max(lines, self.__draw_node_gpu_usage(node, column_widths, y, x + i*step))
+            i += 1
+
+        return lines
+
+    def __draw_nodes_docker_containers(self, y, x, nodes):
+
+        lines = 0
+        column_widths = [14, 5, 10, 16]
+        width = sum(column_widths) + len(column_widths) - 1
+        step = max(0, width + (self.width - 2 - len(nodes)*width)/(len(nodes) - 1))
+
+        i = 0
+        for node in nodes:
+            lines = max(lines, self.__draw_node_docker_containers(node, column_widths, y, x + i*step))
+            i += 1
+
+        return lines
+
+    def __draw_status_line(self):
+
+        self.__update_status()
+        self.color = curses.color_pair(1)
+        self.__draw_str(self.height - 1, 0, self.status)
+
+    def __draw_node_gpu_usage(self, node, column_widths, y, x):
+
+        self.color = curses.color_pair(0)
+        self.__draw_str(y, x, node + ':')
+        self.__draw_str(y+1, x, '-'*(len(node) + 1))
+
+        usages = self.gpu_usages.get_usages(node)
+
+        if usages is None:
+            self.__draw_str(y+2, x, "[unknown]")
+            return 0
+
+        table = []
+        table.append(["GPU", "JOBID", "PID", "MEM %", "UTIL %"])
+        for pid, usage in usages.items():
+            table.append([usage['gpu'], self.__get_job_id(node, pid), pid, usage['mem_percent'], usage['gpu_percent']])
+
+        r,c = self.__draw_table(y+2, x, table, column_widths, row_colors=lambda i,row: self.job_id_color[row[1]], sort_by_column=0)
+        return r+2
+
+    def __get_job_id(self, node, pid):
+
+        if node in self.node_pid_job_id:
+            if pid in self.node_pid_job_id[node]:
+                return self.node_pid_job_id[node][pid]
+        return None
+
+    def __draw_node_docker_containers(self, node, column_widths, y, x):
+
+        self.color = curses.color_pair(0)
+        self.__draw_str(y, x, node + ':')
+        self.__draw_str(y+1, x, '-'*(len(node) + 1))
+
+        containers = self.docker_containers.get_containers(node)
+
+        if containers is None:
+            self.__draw_str(y+2, x, "[unknown]")
+            return 0
+
+        table = []
+        table.append(["NAME", "JOBID", "IMAGE", "STATUS"])
+        for name, container in containers.items():
+            table.append([name, container['job_id'], container['image'], container['status']])
+
+        r,c = self.__draw_table(y+2, x, table, column_widths, row_colors=lambda i,row: self.job_id_color[row[1]], sort_by_column=1)
+        return r+2
+
+    def __draw_table(self, y, x, data, column_widths, row_colors=None, sort_by_column=None):
+
+        if len(data) == 0:
+            return 0, 0
+
+        if row_colors is None:
+            row_colors = lambda i,row: i
+
+        if sort_by_column is not None:
+            data[1:] = sorted(data[1:],cmp=lambda r1,r2: cmp(r1[sort_by_column],r2[sort_by_column]))
+
+        header = self.__format_row(data[0], column_widths)
+        self.color = curses.color_pair(0)
+        self.__draw_str(y, x, header)
+        i = 0
+        for i in range(1, len(data)):
+            row = self.__format_row(data[i], column_widths)
+            self.color = curses.color_pair(row_colors(i, data[i]))
+            self.__draw_str(y+i, x, row)
+
+        return i+1, len(header)
+
+    def __format_row(self, fields, column_widths, separator=" "):
+
+        stretches = column_widths.count(-1)
+        stretch_width = 0
+
+        if stretches > 0:
+            min_width = 0
+            for w in column_widths:
+                if w > 0:
+                    min_width += w
+            min_width += (len(column_widths)-1)*len(separator)
+            stretch_width = max(0, (self.width - 2 - min_width)/stretches)
+
+        stretch = lambda c: c if c >= 0 else stretch_width
+
+        return separator.join(
+                [str(f)[:stretch(c)].ljust(stretch(c)) for f,c in zip(fields, column_widths)]
+        )
+
+    def __draw_str(self, y, x, text):
+        if y >= self.height or x >= self.width:
+            return
+        self.screen.addnstr(y, x, text, max(0, self.width - x - 1), self.color)
+
+    def __update_status(self):
+
+        while not self.status_queue.empty():
+            self.status = self.status_queue.get()
+
+    def __integrate_task_report(self):
+
+        task_report = self.__get_task_report()
+        self.tasks.update(task_report)
+
+        self.container_name_job_id = {}
+        for job_id in self.tasks.get_job_ids():
+            task = self.tasks.get_task(job_id)
+            if 'docker_container_name' in task:
+                self.container_name_job_id[task['docker_container_name']] = job_id
+
+    def __get_task_report(self):
+
+        try:
+            with open(os.devnull, 'w') as devnull:
+                result = check_output(
+                        [
+                            'bjobs',
+                            '-UF'
+                        ], stderr=devnull
+                )
+        except:
+            return []
+
+        job_re = re.compile('Job <(.*)>, Job Name <(.*)>, User <(.*)>, Project <(.*)>, Application <(.*)>, Status <(.*)>, Queue <(.*)>, Interactive pseudo-terminal shell mode, Command <(.*)>, Share group charged <(.*)>')
+        resources_re = re.compile('.*, ([0-9]*) Task.*, Requested Resources .*ngpus_physical=(.*),mem=([0-9]*).*')
+
+        task_report = []
+        next_line = None
+        for line in result.split('\n'):
+            if line.strip() == '':
+                continue
+            if line.startswith('Job'):
+                next_line = 'resources'
+                matches = job_re.match(line)
+                if not matches:
+                    next_line = None
+                    continue
+                job_id = int(matches.group(1))
+                name = matches.group(2)
+                user = matches.group(3)
+                state = matches.group(6)
+                command = matches.group(8)
+                continue
+            if next_line == 'resources':
+                next_line = 'skip_runtime'
+                matches = resources_re.match(line)
+                cpus = int(matches.group(1))
+                gpus = int(matches.group(2))
+                mem = int(matches.group(3))
+                continue
+            if next_line == 'skip_runtime':
+                next_line = 'runtime'
+                continue
+            if next_line == 'runtime':
+                next_line = 'skip_timelimit'
+                tokens = line.strip().split()
+                runtime = float(tokens[0])
+                nodes = tokens[-1]
+                continue
+            if next_line == 'skip_timelimit':
+                next_line = 'timelimit'
+                continue
+            if next_line == 'timelimit':
+                next_line = None
+                timelimit = float(line.strip().split()[0])
+                task_report.append({
+                        'job_id': job_id,
+                        'user': user,
+                        'command': command,
+                        'gpus': gpus,
+                        'cpus': cpus,
+                        'mem': mem,
+                        'time': runtime,
+                        'timelimit': timelimit,
+                        'state': state,
+                        'name': name,
+                        'nodes': nodes,
+                })
+
+        return task_report
+
+    def __integrate_node_reports(self):
+        '''Get the most recent node report for each node and update statistics.'''
+
+        for node in nodes:
+
+            report = None
+            while not self.node_report_queues[node].empty():
+                try:
+                    report = self.node_report_queues[node].get()
+                except:
+                    report = { 'error': "Couldn't read report from " + node }
+                if 'status' in report:
+                    self.update_status_line(node + ": " + report['status'])
+                if 'error' in report:
+                    self.update_status_line("ERROR(" + node + "): " + report['error'])
+                    # if 'exception' in report:
+                        # raise report['exception']
+            if report is None:
+                continue
+
+            self.node_pid_job_id[node] = {}
+            pid_job_id = self.node_pid_job_id[node]
+
+            if 'node_stats' in report:
+                self.docker_containers.update(node, report['node_stats'])
+                self.gpu_usages.update(node, report['node_stats'])
+                self.slurm_processes.update(node, report['node_stats'])
+                self.docker_processes.update(node, report['node_stats'])
+
+                for job_id in self.slurm_processes.get_job_ids(node):
+
+                    subprocesses = self.slurm_processes.get_process(job_id)['subprocesses']
+                    for pid in subprocesses:
+                        pid_job_id[pid] = job_id
+
+                for container_name,container in self.docker_containers.get_containers(node).items():
+
+                    if container_name in self.container_name_job_id:
+                        job_id = self.container_name_job_id[container_name]
+                    else:
+                        job_id = None
+
+                    container['job_id'] = job_id
+                    container_id = container['container_id']
+                    process = self.docker_processes.get_process(container_id)
+
+                    if process is not None:
+                        subprocesses = process['subprocesses']
+                        for pid in subprocesses:
+                            pid_job_id[pid] = job_id
+                    else:
+                        # no process found for docker container!
+                        container['status'] = 'ZOMBIE ' + container['status']
+
+    def __get_node_reports(self, node):
+
+        try:
+
+            with silence():
+
+                parent_pid = os.getppid()
+
+                self.node_report_queues[node].put({'status': "connecting..."})
+                connection = paramiko.SSHClient()
+                connection.load_system_host_keys()
+                connection.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                connection.connect(node)
+                self.connections[node] = connection
+                self.node_report_queues[node].put({'status': "connected"})
+
+                while not self.stop.is_set():
+
+                    if os.getppid() != parent_pid:
+                        break
+
+                    stdin, stdout, stderr = connection.exec_command(spy_command + ' --raw-node-stats')
+                    result = ''.join([l for l in stdout ])
+
+                    try:
+                        result = json.loads(result)
+                        self.node_report_queues[node].put({'node_stats': result})
+                    except:
+                        self.node_report_queues[node].put({'error': "Couldn't deserialize " + result})
+
+                connection.close()
+
+        except Exception as e:
+
+            self.node_report_queues[node].put({'error': "Could not connect to " + node + " (make sure you can ssh non-interactively)", 'exception': e})
+
+    def __cancel_job(self, job_id):
+
+        self.update_status_line("Cancelling job %d..."%job_id)
+        try:
+            result = check_output(
+                    [
+                        'bkill',
+                        str(job_id)
+                    ],
+                    stderr=STDOUT
+            )
+        except:
+            self.update_status_line("bkill failed for job %d"%job_id)
+            raise
+
+        if 'error' in result:
+            self.update_status_line("Could not cancel job %d: %s"%(job_id, result))
+        else:
+            self.update_status_line("Job %d canceled"%job_id)
+
+def run_curses(screen):
+
+    curses.start_color()
+    for i in range(1, 256):
+        curses.init_pair(i, i, 0)
+    for i in range(1, 256):
+        curses.init_pair(i+256, 0, i)
+    curses.curs_set(0)
+    curses.noecho()
+    screen.nodelay(1)
+    screen.keypad(1)
+
+    spy = Spy(screen)
+    try:
+        spy.main_loop()
+    except:
+        traceback.print_exc()
+        spy.teardown()
+        raise
+    spy.teardown()
+
+
+if __name__ == "__main__":
+    curses.wrapper(run_curses)
