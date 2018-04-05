@@ -781,20 +781,32 @@ class Spy:
             tokens = line.split('#')
             # jobid job_name user stat pend_reason cmd slots effective_resreq run_time runtimelimit exec_host pids
             # 0     1        2    3    4           5   6     7                8        9            10        11
-            job_id = int(tokens[0])
-            name = tokens[1]
-            user = tokens[2]
-            state = tokens[3]
-            command = tokens[5]
-            cpus = int(tokens[6])
-            resources = tokens[7]
-            matches = resources_re.match(resources)
-            mem = int(matches.group(1))
-            gpus = int(matches.group(2))
-            runtime = int(tokens[8].split()[0])
-            timelimit = int(tokens[9].split('.')[0])
-            nodes = tokens[10].split('*')[-1]
-            pids = [ int(p) for p in tokens[11].split(',') ]
+            try:
+                job_id = int(tokens[0])
+                name = tokens[1]
+                user = tokens[2]
+                state = tokens[3]
+                command = tokens[5]
+                if state == 'RUN':
+                    cpus = int(tokens[6])
+                    resources = tokens[7]
+                    matches = resources_re.match(resources)
+                    mem = int(matches.group(1))
+                    gpus = int(matches.group(2))
+                    runtime = int(tokens[8].split()[0])
+                    timelimit = int(tokens[9].split('.')[0])
+                    nodes = tokens[10].split('*')[-1]
+                    pids = [ int(p) for p in tokens[11].split(',') if p != '-']
+                else:
+                    cpus = ''
+                    mem = ''
+                    gpus = ''
+                    runtime = ''
+                    timelimit = ''
+                    nodes = ''
+                    pids = []
+            except Exception as e:
+                raise RuntimeError(str(e) + line + str(tokens))
 
             task_report.append({
                     'job_id': job_id,
