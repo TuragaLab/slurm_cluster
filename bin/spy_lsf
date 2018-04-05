@@ -772,7 +772,8 @@ class Spy:
         except:
             raise RuntimeError("Failed to run " + " ".join(cmd))
 
-        resources_re = re.compile('.*rusage\[mem=([0-9]*).*ngpus_physical=([0-9]*).*')
+        mem_re = re.compile('.*mem=([0-9]*).*')
+        gpu_re = re.compile('.*ngpus_physical=([0-9]*).*')
 
         task_report = []
         for line in result.split('\n')[1:]:
@@ -790,9 +791,16 @@ class Spy:
                 if state == 'RUN':
                     cpus = int(tokens[6])
                     resources = tokens[7]
-                    matches = resources_re.match(resources)
-                    mem = int(matches.group(1))
-                    gpus = int(matches.group(2))
+                    matches = mem_re.match(resources)
+                    if matches:
+                        mem = int(matches.group(1))
+                    else:
+                        mem = ''
+                    matches = gpu_re.match(resources)
+                    if matches:
+                        gpus = int(matches.group(1))
+                    else:
+                        gpus = ''
                     runtime = int(tokens[8].split()[0])
                     timelimit = int(tokens[9].split('.')[0])
                     nodes = tokens[10].split('*')[-1]
