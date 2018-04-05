@@ -20,7 +20,7 @@ args = parser.parse_args()
 
 if args.raw_node_stats:
 
-    # slurmstepd processes
+    # lsf processes
 
     try:
         result = check_output(
@@ -32,7 +32,7 @@ if args.raw_node_stats:
     except:
         result = ''
 
-    slurm_stats = []
+    lsf_stats = []
     for line in result.split('\n'):
         if line == '' or line.endswith('res'):
             continue
@@ -46,7 +46,7 @@ if args.raw_node_stats:
             step = int(timestamp_job_step[2])
         else:
             step = 0
-        slurm_process = {
+        lsf_process = {
                 'pid': pid,
                 'job_id': job_id,
                 'step': step
@@ -69,15 +69,15 @@ if args.raw_node_stats:
                 child = int(line)
                 tree[parent].append(child)
             pids += tree[parent]
-        slurm_process['subprocesses'] = tree.keys()
-        slurm_stats.append(slurm_process)
+        lsf_process['subprocesses'] = tree.keys()
+        lsf_stats.append(lsf_process)
 
     # docker processes
 
     try:
         result = check_output(
                 [
-                    'ps h -o pid,command -p `pgrep -f \'^docker-containerd-shim\'`'
+                    'docker ps -q | xargs docker inspect --format \'{{.State.Pid}} {{.ID}}\''
                 ],
                 shell=True
         )
@@ -90,7 +90,7 @@ if args.raw_node_stats:
             continue
         tokens = line.split()
         pid = int(tokens[0])
-        container_id = tokens[2][:12]
+        container_id = tokens[1]
         docker_process = {
                 'pid': pid,
                 'container_id': container_id,
@@ -200,9 +200,9 @@ if args.raw_node_stats:
             'gpu_process_stats': gpu_process_stats,
             'docker_stats': docker_stats,
             'docker_process_stats': docker_process_stats,
-            'slurm_stats': slurm_stats
+            'lsf_stats': lsf_stats
     }
-    print json.dumps(stats)
+    print json.dumps(stats, indent=2)
 
     sys.exit(0)
 
@@ -244,7 +244,7 @@ def silence():
     sys.stdout = save_stdout
     sys.stderr = save_stderr
 
-nodes = ['slowpoke1', 'slowpoke2', 'slowpoke3', 'slowpoke4', 'slowpoke5', 'slowpoke6', 'slowpoke7', 'slowpoke8']
+nodes = ['c04u01', 'c04u07', 'c04u12', 'c04u17', 'c04u21', 'c04u26', 'c04u31', 'c04u36']
 spy_command = os.path.abspath(__file__)
 
 class Tasks:
@@ -349,7 +349,7 @@ class GpuUsages:
 
         return self.__usages[node][pid]
 
-class SlurmProcesses:
+class LsfProcesses:
 
     def __init__(self):
         self.__processes = {}
@@ -358,7 +358,7 @@ class SlurmProcesses:
 
         self.__processes[node] = {}
         processes = self.__processes[node]
-        for process in node_report['slurm_stats']:
+        for process in node_report['lsf_stats']:
             processes[process['job_id']] = process
 
     def get_job_ids(self, node):
@@ -406,7 +406,7 @@ class Spy:
         self.tasks = Tasks()
         self.docker_containers = DockerContainers()
         self.gpu_usages = GpuUsages()
-        self.slurm_processes = SlurmProcesses()
+        self.lsf_processes = LsfProcesses()
         self.docker_processes = DockerProcesses()
 
         self.screen = screen
@@ -414,9 +414,9 @@ class Spy:
         self.color_groups = [
                 [40, 41],
                 [214, 215],
+                [190, 191],
                 [172, 173],
                 [124, 125],
-                [190, 191]
         ]
         random.seed(42)
         for g in self.color_groups:
@@ -435,9 +435,9 @@ class Spy:
         self.status = "Started"
         self.node_report_queues = { node: multiprocessing.Queue(10) for node in nodes }
 
-        # map from (node,pid) to slurm job_id
+        # map from (node,pid) to lsf job_id
         self.node_pid_job_id = { node: {} for node in nodes }
-        # map from docker container name to slurm job_id
+        # map from docker container name to lsf job_id
         self.container_name_job_id = {}
 
         self.stop = multiprocessing.Event()
@@ -536,7 +536,7 @@ class Spy:
 
         self.color = curses.color_pair(0)
         k = 0
-        self.__draw_str(y+k, x, "SLURM STATUS " + '-'*self.width)
+        self.__draw_str(y+k, x, "LSF STATUS " + '-'*self.width)
         k += 2
 
         job_ids = self.tasks.get_job_ids()
@@ -545,7 +545,7 @@ class Spy:
             self.__draw_str(y+k, x, "[no running tasks]")
             return 1
 
-        column_widths = [5, 8, -1, 4, 4, 6, 11, 8, 8, 8]
+        column_widths = [8, 8, -1, 4, 4, 6, 11, 8, 8, 8]
         table = []
         table.append(["JOBID", "USER", "COMMAND", "GPUS", "CPUS", "MEM", "TIME", "STATE", "NAME", "NODE"])
         for job_id in job_ids:
@@ -562,7 +562,7 @@ class Spy:
         return r+k
 
     def __update_color_map(self):
-        '''Assign each slurm task a color.'''
+        '''Assign each lsf task a color.'''
 
         for job_id in self.tasks.get_job_ids():
 
@@ -613,7 +613,7 @@ class Spy:
     def __draw_nodes_gpu_usage(self, y, x, nodes):
 
         lines = 0
-        column_widths = [3, 5, 8, 6, 6]
+        column_widths = [3, 8, 8, 6, 6]
         width = sum(column_widths) + len(column_widths) - 1
         step = max(0, width + (self.width - 2 - len(nodes)*width)/(len(nodes) - 1))
 
@@ -627,7 +627,7 @@ class Spy:
     def __draw_nodes_docker_containers(self, y, x, nodes):
 
         lines = 0
-        column_widths = [14, 5, 10, 16]
+        column_widths = [14, 8, 10, 16]
         width = sum(column_widths) + len(column_widths) - 1
         step = max(0, width + (self.width - 2 - len(nodes)*width)/(len(nodes) - 1))
 
@@ -755,72 +755,61 @@ class Spy:
 
     def __get_task_report(self):
 
+        cmd = [
+            'bjobs',
+            '-u',
+            'all',
+            '-q',
+            'slowpoke',
+            '-o',
+            'jobid job_name user stat pend_reason cmd slots effective_resreq '
+            'run_time runtimelimit exec_host pids delimiter="#"',
+        ]
+
         try:
             with open(os.devnull, 'w') as devnull:
-                result = check_output(
-                        [
-                            'bjobs',
-                            '-UF'
-                        ], stderr=devnull
-                )
+                result = check_output(cmd, stderr=devnull)
         except:
-            return []
+            raise RuntimeError("Failed to run " + " ".join(cmd))
 
-        job_re = re.compile('Job <(.*)>, Job Name <(.*)>, User <(.*)>, Project <(.*)>, Application <(.*)>, Status <(.*)>, Queue <(.*)>, Interactive pseudo-terminal shell mode, Command <(.*)>, Share group charged <(.*)>')
-        resources_re = re.compile('.*, ([0-9]*) Task.*, Requested Resources .*ngpus_physical=(.*),mem=([0-9]*).*')
+        resources_re = re.compile('.*rusage\[mem=([0-9]*).*ngpus_physical=([0-9]*).*')
 
         task_report = []
-        next_line = None
-        for line in result.split('\n'):
+        for line in result.split('\n')[1:]:
             if line.strip() == '':
                 continue
-            if line.startswith('Job'):
-                next_line = 'resources'
-                matches = job_re.match(line)
-                if not matches:
-                    next_line = None
-                    continue
-                job_id = int(matches.group(1))
-                name = matches.group(2)
-                user = matches.group(3)
-                state = matches.group(6)
-                command = matches.group(8)
-                continue
-            if next_line == 'resources':
-                next_line = 'skip_runtime'
-                matches = resources_re.match(line)
-                cpus = int(matches.group(1))
-                gpus = int(matches.group(2))
-                mem = int(matches.group(3))
-                continue
-            if next_line == 'skip_runtime':
-                next_line = 'runtime'
-                continue
-            if next_line == 'runtime':
-                next_line = 'skip_timelimit'
-                tokens = line.strip().split()
-                runtime = float(tokens[0])
-                nodes = tokens[-1]
-                continue
-            if next_line == 'skip_timelimit':
-                next_line = 'timelimit'
-                continue
-            if next_line == 'timelimit':
-                next_line = None
-                timelimit = float(line.strip().split()[0])
-                task_report.append({
-                        'job_id': job_id,
-                        'user': user,
-                        'command': command,
-                        'gpus': gpus,
-                        'cpus': cpus,
-                        'mem': mem,
-                        'time': runtime,
-                        'timelimit': timelimit,
-                        'state': state,
-                        'name': name,
-                        'nodes': nodes,
-                })
+            tokens = line.split('#')
+            # jobid job_name user stat pend_reason cmd slots effective_resreq run_time runtimelimit exec_host pids
+            # 0     1        2    3    4           5   6     7                8        9            10        11
+            job_id = int(tokens[0])
+            name = tokens[1]
+            user = tokens[2]
+            state = tokens[3]
+            command = tokens[5]
+            cpus = int(tokens[6])
+            resources = tokens[7]
+            matches = resources_re.match(resources)
+            mem = int(matches.group(1))
+            gpus = int(matches.group(2))
+            runtime = int(tokens[8].split()[0])
+            timelimit = int(tokens[9].split('.')[0])
+            nodes = tokens[10].split('*')[-1]
+            pids = [ int(p) for p in tokens[11].split(',') ]
+
+            task_report.append({
+                    'job_id': job_id,
+                    'name': name,
+                    'user': user,
+                    'state': state,
+                    'command': command,
+                    'cpus': cpus,
+                    'mem': mem,
+                    'gpus': gpus,
+                    'time': runtime,
+                    'timelimit': timelimit,
+                    'nodes': nodes,
+                    'pids': pids
+            })
 
         return task_report
 
@@ -850,16 +839,16 @@ class Spy:
             if 'node_stats' in report:
                 self.docker_containers.update(node, report['node_stats'])
                 self.gpu_usages.update(node, report['node_stats'])
-                self.slurm_processes.update(node, report['node_stats'])
+                self.lsf_processes.update(node, report['node_stats'])
                 self.docker_processes.update(node, report['node_stats'])
 
-                for job_id in self.slurm_processes.get_job_ids(node):
+                for job_id in self.lsf_processes.get_job_ids(node):
 
-                    subprocesses = self.slurm_processes.get_process(job_id)['subprocesses']
+                    subprocesses = self.lsf_processes.get_process(job_id)['subprocesses']
                     for pid in subprocesses:
                         pid_job_id[pid] = job_id
 
-                for container_name,container in self.docker_containers.get_containers(node).items():
+                for container_name, container in self.docker_containers.get_containers(node).items():
 
                     if container_name in self.container_name_job_id:
                         job_id = self.container_name_job_id[container_name]
