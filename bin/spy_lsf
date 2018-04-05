@@ -805,6 +805,8 @@ class Spy:
                     timelimit = ''
                     nodes = ''
                     pids = []
+                if state == 'PEND':
+                    state += ' ' + tokens[4]
             except Exception as e:
                 raise RuntimeError(str(e) + line + str(tokens))
 
