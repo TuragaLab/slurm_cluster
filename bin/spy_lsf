@@ -930,12 +930,9 @@ class Spy:
             )
         except:
             self.update_status_line("bkill failed for job %d"%job_id)
-            raise
+            return
 
-        if 'error' in result:
-            self.update_status_line("Could not cancel job %d: %s"%(job_id, result))
-        else:
-            self.update_status_line("Job %d canceled"%job_id)
+        self.update_status_line("Job %d canceled"%job_id)
 
 def run_curses(screen):
 
