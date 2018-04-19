@@ -101,7 +101,7 @@ nvidia-docker \
   -u `id -u $USER`:`id -g $USER` \
   -v /groups:/groups:shared \
   -v /nrs:/nrs:shared \
-  -v /scratch:/scratch:shared \
+  -v /scratch:/scratch:rshared \
   -w ${WORK_DIR} \
   ${ENVI} \
   ${PORTS} \
