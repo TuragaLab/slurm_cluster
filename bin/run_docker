@@ -108,4 +108,4 @@ nvidia-docker \
   ${DOCKER_IMAGE} \
   ${COMMAND} &
 
-wait
+wait $!
