@@ -2,7 +2,7 @@
 set -e
 
 usage() {
-  echo "Usage: $0 [-w <working directory>] -d <docker image> <command> [<args>...]";
+  echo "Usage: $0 [-w <working directory>] -d <docker image> -e <environmental variable>  <command> [<args>...]";
   echo;
   echo "    -w  The working directory for <command>, defaults to current";
   echo "        directory.";
@@ -15,6 +15,8 @@ usage() {
   echo "        available.";
   echo;
   echo "    -p  Ports to expose, see 'man docker run'.";
+  echo;
+  echo "    -e  Optional environmental variable for docker image.";
 }
 
 # defaults
@@ -22,12 +24,13 @@ usage() {
 WORK_DIR=$(pwd)
 DOCKER_IMAGE=''
 PORTS=''
+ENVI=''
 THIS_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
 
 # parse command line args
 
 num_args=0
-while getopts ":w:d:p:" opt; do
+while getopts ":w:d:p:e:" opt; do
   case "${opt}" in
     w)
         WORK_DIR=${OPTARG}
@@ -39,6 +42,10 @@ while getopts ":w:d:p:" opt; do
         ;;
     p)
         PORTS="-p ${OPTARG}"
+        ((num_args+=2))
+        ;;
+    e)
+        ENVI="-e ${OPTARG}"
         ((num_args+=2))
         ;;
     *)
@@ -96,6 +103,7 @@ nvidia-docker \
   -v /nrs:/nrs:shared \
   -v /scratch:/scratch:shared \
   -w ${WORK_DIR} \
+  ${ENVI} \
   ${PORTS} \
   ${DOCKER_IMAGE} \
   ${COMMAND} &
